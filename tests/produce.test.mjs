@@ -291,3 +291,24 @@ test('คลิป: owner video attaches to a scene, is stored as a clip, and th
   await h.command('U1', { cmd: 'makevideo' }, 'c8');                          // back to the first signature: replay, no charge
   assert.equal(b.store.state.ledger.length, ledgerAfterFirst + 1);
 });
+
+test('เปลี่ยนเสียง: new voice regenerates the takes, switching back reuses the old takes without charge', { skip: !hasFfmpeg }, async () => {
+  const b = build();
+  assert.deepEqual(parseCommand('เปลี่ยนเสียง ชาย'), { cmd: 'setvoice', voice: 'male' });
+  await b.h.command('U1', parseCommand('ผลิต love G1 รักแรกพบริมทะเล'), 'v0');
+  const a = parsePostback(b.pushes.at(-1)[1].template.actions[0].data);
+  await b.h.postback('U1', a, 'v1');
+  const bb = parsePostback(b.pushes.at(-1)[2].template.actions[0].data);
+  await b.h.postback('U1', bb, 'v2');                                        // female voice (plan default)
+  const base = b.store.state.ledger.length;
+  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 4);
+  await b.h.command('U1', { cmd: 'setvoice', voice: 'male' }, 'v3');
+  await b.h.command('U1', { cmd: 'makevideo' }, 'v4');
+  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 8);                 // 4 new takes
+  assert.match(b.calls.filter((x) => x.voiceUrl).at(-1).voiceUrl, /speech\/M\?/);
+  assert.equal(b.store.state.ledger.length, base + 5);                       // 4 voices + 1 render
+  await b.h.command('U1', { cmd: 'setvoice', voice: 'female' }, 'v5');
+  await b.h.command('U1', { cmd: 'makevideo' }, 'v6');
+  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 8);                 // nothing re-made
+  assert.equal(b.store.state.ledger.length, base + 5);                       // same inputs as the first render: replay, free
+});

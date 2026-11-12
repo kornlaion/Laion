@@ -145,9 +145,9 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
   // ---------- multi-scene (ZEN) flow ----------
   const sceneIdx = (a) => Number(/scene-(\d+)-/.exec(a.r2Key)?.[1] ?? -1);
   /** Latest asset per scene index (later rows replace earlier ones, so a regenerated scene wins). */
-  async function bySceneIndex(jobId, kind) {
+  async function bySceneIndex(jobId, kind, keep = () => true) {
     const m = new Map();
-    for (const a of await store.listAssets(jobId, kind)) { const i = sceneIdx(a); if (i >= 0) m.set(i, a); }
+    for (const a of (await store.listAssets(jobId, kind)).filter(keep)) { const i = sceneIdx(a); if (i >= 0) m.set(i, a); }
     return m;
   }
   const hash = (x) => crypto.createHash('sha1').update(x).digest('hex').slice(0, 10);
@@ -206,7 +206,8 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     const scenes = job.plan.scenes;
     const imgs = await bySceneIndex(job.id, 'image');
     if (scenes.some((_, i) => !imgs.has(i))) return push(userId, [text('ยังมีซีนที่ไม่มีภาพ พิมพ์ ซีน <เลข> เพื่อสร้างก่อน')]);
-    const voices = await bySceneIndex(job.id, 'voice');
+    const voiceTag = `-${job.plan.voice === 'male' ? 'male' : 'female'}-`;
+    const voices = new Map([...(await bySceneIndex(job.id, 'voice', (a) => a.r2Key.includes(voiceTag)))]);   // only takes made with the chosen voice
     let cost = 0; let voiceCost = 0;
     const audioKeys = [];
     for (let i = 0; i < scenes.length; i++) {
@@ -214,10 +215,10 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
       if (old) { audioKeys.push(old.r2Key); continue; }
       const v = await gateway.run({ jobId: job.id, action: 'voice', provider: 'elevenlabs', actor: 'worker',
         params: { text: scenes[i].text, voice: job.plan.voice, previous_text: scenes[i - 1]?.text, next_text: scenes[i + 1]?.text },
-        idempotencyKey: `auto-voice:${job.id}:${i}` });
+        idempotencyKey: `auto-voice:${job.id}:${job.plan.voice}:${i}` });
       if (!v.ok) return push(userId, [text(`ขั้นเสียงซีน ${i + 1} ไม่สำเร็จ: ${reasonText(v)}\nพิมพ์ ทำวิดีโอ เพื่อลองใหม่`)]);
-      if (v.replay) { const again = (await bySceneIndex(job.id, 'voice')).get(i); if (again) { audioKeys.push(again.r2Key); continue; } return push(userId, [text(`เสียงซีน ${i + 1} ถูกสร้างไปแล้วแต่หาไฟล์ไม่เจอ`)]); }
-      const k = `jobs/${job.id}/scene-${i}-${v.taskId}.mp3`;
+      if (v.replay) { const again = (await bySceneIndex(job.id, 'voice', (a) => a.r2Key.includes(voiceTag))).get(i); if (again) { audioKeys.push(again.r2Key); continue; } return push(userId, [text(`เสียงซีน ${i + 1} ถูกสร้างไปแล้วแต่หาไฟล์ไม่เจอ`)]); }
+      const k = `jobs/${job.id}/scene-${i}${voiceTag}${v.taskId}.mp3`;
       try { await storage.put(k, v.result.audio, 'audio/mpeg'); await store.addAsset({ jobId: job.id, r2Key: k, kind: 'voice' }); }
       catch (err) { console.error('storage_error', err?.message ?? err); return push(userId, [text('บันทึกไฟล์เสียงไม่สำเร็จ (R2)')]); }
       audioKeys.push(k); voiceCost += v.costThb;
@@ -389,6 +390,13 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         }
         const msgs = [text(`ไอเดียช่อง ${cmd.channel} (${list[0].runDate}) ปัดดูได้ แล้วกด "ผลิตเรื่องนี้"`), ideasCarousel(fresh)];
         return cmd.cmd === 'ideasnew' ? push(userId, msgs) : reply(replyToken, msgs);
+      }
+      case 'setvoice': {
+        const job = await latestA();
+        if (!job?.plan?.scenes) return reply(replyToken, [text(NO_JOB)]);
+        job.plan.voice = cmd.voice;
+        await store.setPlan(job.id, job.plan);
+        return reply(replyToken, [text(`เปลี่ยนเป็นเสียง${cmd.voice === 'male' ? 'ชาย' : 'หญิง'}แล้ว พิมพ์ ทำวิดีโอ เพื่อทำเสียงและเรนเดอร์ใหม่ (ค่าเสียงใหม่คิดตามจริง ส่วนเสียงเดิมของเสียงนั้นถ้าเคยทำไว้จะไม่คิดซ้ำ)`)]);
       }
       case 'scene':
         return sceneCommand(userId, cmd, replyToken);
