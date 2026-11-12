@@ -23,7 +23,7 @@ test('cues cover the whole duration in order; ASS has one event per cue', () => 
 let hasFfmpeg = true;
 try { execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' }); } catch { hasFfmpeg = false; }
 
-test('real ffmpeg: image + audio + Thai subtitles -> 1080x1920 mp4', { skip: !hasFfmpeg }, async () => {
+test('real ffmpeg: image + audio + Thai subtitles -> 720x1280 mp4 (default size)', { skip: !hasFfmpeg }, async () => {
   const tmp = fs.mkdtempSync('/tmp/rt-');
   execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'gradients=s=1024x1536:d=1:c0=0x884422:c1=0x224488', '-frames:v', '1', `${tmp}/i.jpg`]);
   execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=3', '-c:a', 'libmp3lame', `${tmp}/a.mp3`]);
@@ -31,7 +31,7 @@ test('real ffmpeg: image + audio + Thai subtitles -> 1080x1920 mp4', { skip: !ha
   fs.writeFileSync(`${tmp}/out.mp4`, video);
   const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_streams', `${tmp}/out.mp4`]).toString());
   const v = probe.streams.find((s) => s.codec_type === 'video'), a = probe.streams.find((s) => s.codec_type === 'audio');
-  assert.deepEqual([v.width, v.height, v.codec_name, a.codec_name], [1080, 1920, 'h264', 'aac']);
+  assert.deepEqual([v.width, v.height, v.codec_name, a.codec_name], [720, 1280, 'h264', 'aac']);
   assert.ok(seconds > 3 && seconds < 4);
   console.log('RENDER_OUT', `${tmp}/out.mp4`);
 });
