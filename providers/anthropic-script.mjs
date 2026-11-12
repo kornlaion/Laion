@@ -59,7 +59,11 @@ export function createScriptAdapter({
       headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),
     });
-    if (!res.ok) throw new Error(`anthropic_${res.status}`);          // body not logged
+    if (!res.ok) {
+      let detail = '';
+      try { detail = String((await res.json())?.error?.message ?? '').replace(/\s+/g, ' ').slice(0, 140); } catch { /* no body */ }   // API's own reason (e.g. low credit, bad model); never contains the key
+      throw new Error(`anthropic_${res.status}${detail ? `: ${detail}` : ''}`);
+    }
     const json = await res.json();
     return { text: (json.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join(''), id: json.id ?? null };
   }
