@@ -52,6 +52,8 @@ export function makeServer({ secret, allow, handlers, images, assets, experts = 
           const cmd = parseCommand(ev.message.text);
           if (cmd) { console.log('command', cmd.cmd); await handlers.command(userId, cmd, ev.replyToken); }
           else console.log('ignored: text is not a known command');
+        } else if (ev.type === 'message' && ev.message?.type === 'video' && handlers.media) {
+          await handlers.media(userId, ev.message, ev.replyToken);
         } else if (ev.type === 'postback') {
           const pb = parsePostback(ev.postback?.data);
           if (pb) await handlers.postback(userId, pb, ev.replyToken);
@@ -68,7 +70,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const { connect, createPgStore } = await import('../gateway/store-pg.mjs');
   const { createHandlers } = await import('./app.mjs');
   const { contactSheet } = await import('../render/zen.mjs');
-  const { createLineReply, createLinePush } = await import('./line-client.mjs');
+  const { createLineReply, createLinePush, createLineContent } = await import('./line-client.mjs');
   const { createImageCache } = await import('./images.mjs');
   const { createGateway } = await import('../gateway/gateway.mjs');
   const { createOpenAIImageAdapter } = await import('../providers/openai-image.mjs');
@@ -91,7 +93,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
   const baseUrl = process.env.PUBLIC_BASE_URL ?? (domain ? `https://${domain}` : '');
   if (!baseUrl) console.error('PUBLIC_BASE_URL / RAILWAY_PUBLIC_DOMAIN not set: image replies will fail');
-  const handlers = createHandlers({ store, reply: createLineReply(), push: createLinePush(), gateway, images, storage, baseUrl, contactSheet, planProvider, experts, owners: [...allow] });
+  const handlers = createHandlers({ store, reply: createLineReply(), push: createLinePush(), gateway, images, storage, baseUrl, contactSheet, planProvider, experts, owners: [...allow], content: createLineContent() });
   const port = Number(process.env.PORT ?? 8787);
   makeServer({ secret, allow, handlers, images, assets, experts }).listen(port, () => console.log(`listening on ${port}`));
 }

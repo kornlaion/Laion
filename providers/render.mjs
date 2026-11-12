@@ -13,9 +13,10 @@ export function createRenderAdapter({ storage }) {
     async call(p) {
       if (!storage) throw new Error('storage_not_configured');
       if (p.scenes) {
-        const loaded = await Promise.all(p.scenes.map(async (sc) => ({ image: await storage.get(sc.imageKey), audio: await storage.get(sc.audioKey), text: sc.text })));
+        const loaded = await Promise.all(p.scenes.map(async (sc) => ({ image: await storage.get(sc.imageKey), audio: await storage.get(sc.audioKey), text: sc.text, clip: sc.clipKey ? await storage.get(sc.clipKey) : undefined })));
+        if (p.scenes.some((sc, i) => sc.clipKey && !loaded[i].clip)) throw new Error('clip_missing');
         if (loaded.some((x) => !x.image || !x.audio)) throw new Error('input_missing');
-        const { video, seconds } = await renderZen({ scenes: loaded, title: process.env.SHOW_TITLE === '1' ? p.title : undefined })   // opening title is off by default (set SHOW_TITLE=1 to bring it back);
+        const { video, seconds } = await renderZen({ scenes: loaded, title: process.env.SHOW_TITLE === '1' ? p.title : undefined });   // opening title is off by default (set SHOW_TITLE=1 to bring it back)
         return { video, seconds, externalId: null };
       }
       const [image, audio] = await Promise.all([storage.get(p.imageKey), storage.get(p.audioKey)]);

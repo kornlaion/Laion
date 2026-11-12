@@ -52,6 +52,10 @@ export function parseCommand(text) {
   m = t.match(/^ซีน (\d{1,2})(?: (.{3,600}))?$/);
   if (m) return { cmd: 'scene', n: Number(m[1]), prompt: m[2] };
   if (t === 'ทำวิดีโอ') return { cmd: 'makevideo' };
+  m = t.match(/^คลิป (\d{1,2})$/);
+  if (m) return { cmd: 'clip', n: Number(m[1]) };
+  m = t.match(/^ล้างคลิป (\d{1,2})$/);
+  if (m) return { cmd: 'clearclip', n: Number(m[1]) };
   m = t.match(/^พัก (\S+)$/);
   if (m) return { cmd: 'pause', target: m[1] };
   m = t.match(/^เริ่ม (\S+)$/);

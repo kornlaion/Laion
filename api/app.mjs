@@ -29,7 +29,7 @@ const REASONS = {
   provider_error: 'ผู้ให้บริการตอบผิดพลาด',
 };
 
-export function createHandlers({ store, reply, push, gateway, images, storage, baseUrl, contactSheet, planProvider = 'anthropic', experts = new Set(), owners = [], dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
+export function createHandlers({ store, reply, push, gateway, images, storage, baseUrl, contactSheet, planProvider = 'anthropic', experts = new Set(), owners = [], content, dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
   const reasonText = (out) => `${REASONS[out.reason] ?? (out.reason.startsWith('gate_missing') ? 'ยังไม่ผ่านด่านอนุมัติที่จำเป็น' : out.reason)}${out.reason === 'provider_error' && out.message ? ` (${out.message})` : ''}`;
 
   /** Saves to R2 (permanent) when configured, else the temporary in-memory cache. Returns the id used in the URL. */
@@ -103,6 +103,8 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
   }
 
 
+
+  const pendingClip = new Map();   // userId -> { jobId, n, at }: the next video the user sends becomes this scene's clip
 
   // ---------- Gate C (expert review) for health/wellbeing channels ----------
   const needsC = (job) => job.requiresExpert;
@@ -201,8 +203,10 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
       audioKeys.push(k); voiceCost += v.costThb;
     }
     cost += voiceCost;
-    const sceneParams = scenes.map((sc, i) => ({ imageKey: imgs.get(i).r2Key, audioKey: audioKeys[i], text: sc.text }));
-    const sig = hash(sceneParams.map((x) => x.imageKey + x.audioKey).join('|'));
+    const clips = await bySceneIndex(job.id, 'clip');
+    const dropped = new Set(job.plan.noClip ?? []);
+    const sceneParams = scenes.map((sc, i) => ({ imageKey: imgs.get(i).r2Key, audioKey: audioKeys[i], text: sc.text, ...(clips.has(i) && !dropped.has(i) ? { clipKey: clips.get(i).r2Key } : {}) }));
+    const sig = hash(sceneParams.map((x) => x.imageKey + x.audioKey + (x.clipKey ?? '')).join('|'));
     const r = await gateway.run({ jobId: job.id, action: 'render', provider: 'render', actor: 'worker',
       params: { scenes: sceneParams, title: job.plan.title }, idempotencyKey: `auto-vid:${job.id}:${sig}` });
     if (!r.ok) return push(userId, [text(`ขั้นเรนเดอร์ไม่สำเร็จ: ${reasonText(r)}\nพิมพ์ ทำวิดีโอ เพื่อลองใหม่ (เสียงที่ทำแล้วไม่คิดเงินซ้ำ)`)]);
@@ -216,7 +220,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     catch (err) { console.error('storage_error', err?.message ?? err); return push(userId, [text('บันทึกวิดีโอไม่สำเร็จ (R2)')]); }
     cost += r.costThb;
     return push(userId, [
-      text(`วิดีโอเสร็จแล้ว (${r.result.seconds.toFixed(1)} วินาที, ${scenes.length} ซีน) ดูที่นี่: ${baseUrl}/vid/${vidId}.mp4\nค่าใช้จ่ายโดยประมาณ ฿${cost.toFixed(2)} (เสียง ฿${voiceCost.toFixed(2)} + เรนเดอร์ ฿${r.costThb.toFixed(2)})`),
+      text(`วิดีโอเสร็จแล้ว (${r.result.seconds.toFixed(1)} วินาที, ${scenes.length} ซีน${sceneParams.some((x) => x.clipKey) ? `, คลิปจริง ${sceneParams.filter((x) => x.clipKey).length} ซีน` : ''}) ดูที่นี่: ${baseUrl}/vid/${vidId}.mp4\nค่าใช้จ่ายโดยประมาณ ฿${cost.toFixed(2)} (เสียง ฿${voiceCost.toFixed(2)} + เรนเดอร์ ฿${r.costThb.toFixed(2)})`),
       approvalCard(job.id, 'D', `Gate D ตรวจวิดีโอสุดท้าย\n${job.plan.title}\nอนุมัติก่อนโพสต์`),
     ]);
   }
@@ -333,6 +337,21 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
           approvalCard(jobId, 'A', `Gate A แผนงาน\n${cmd.channel} ${cmd.grade}\n${plan.title}\nอนุมัติแล้วระบบสร้างภาพต่อทันที`),
         ]);
       }
+      case 'clip': {
+        if (!storage || !content) return reply(replyToken, [text('การรับคลิปต้องตั้งค่า R2 และ LINE ก่อน')]);
+        const job = await latestA();
+        if (!job?.plan?.scenes) return reply(replyToken, [text(NO_JOB)]);
+        if (cmd.n < 1 || cmd.n > job.plan.scenes.length) return reply(replyToken, [text(`งานนี้มี ${job.plan.scenes.length} ซีน`)]);
+        pendingClip.set(userId, { jobId: job.id, n: cmd.n, at: Date.now() });
+        return reply(replyToken, [text(`ส่งคลิปแนวตั้ง (9:16) ของซีน ${cmd.n} มาได้เลยภายใน 10 นาที (ไม่เกิน 60 MB)\nเสียงในคลิปจะถูกตัดออก ใช้เสียงพากย์ของระบบแทน ถ้าคลิปสั้นกว่าซีน ระบบจะค้างภาพสุดท้ายไว้ ควรให้คลิปยาวใกล้เคียงซีน`)]);
+      }
+      case 'clearclip': {
+        const job = await latestA();
+        if (!job?.plan?.scenes) return reply(replyToken, [text(NO_JOB)]);
+        job.plan.noClip = [...new Set([...(job.plan.noClip ?? []), cmd.n - 1])];
+        await store.setPlan(job.id, job.plan);
+        return reply(replyToken, [text(`ซีน ${cmd.n} กลับไปใช้ภาพนิ่ง (พิมพ์ ทำวิดีโอ เพื่อเรนเดอร์ใหม่)`)]);
+      }
       case 'scene':
         return sceneCommand(userId, cmd, replyToken);
       case 'makevideo': {
@@ -422,8 +441,29 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     return reply(replyToken, [text(next)]);
   }
 
+
+  /** A video message from the owner: attach it as the clip of the scene chosen with "คลิป <n>". */
+  async function media(userId, msg, replyToken) {
+    const want = pendingClip.get(userId);
+    if (!want || Date.now() - want.at > 10 * 60 * 1000) { pendingClip.delete(userId); return reply(replyToken, [text('ถ้าจะใส่คลิปให้ซีนไหน พิมพ์ คลิป <เลขซีน> ก่อน แล้วค่อยส่งคลิป')]); }
+    if (!storage || !content) return reply(replyToken, [text('การรับคลิปต้องตั้งค่า R2 และ LINE ก่อน')]);
+    pendingClip.delete(userId);
+    try {
+      const buf = await content(msg.id);
+      const key = `jobs/${want.jobId}/scene-${want.n - 1}-clip-${crypto.randomBytes(4).toString('hex')}.mp4`;
+      await storage.put(key, buf, 'video/mp4');
+      await store.addAsset({ jobId: want.jobId, r2Key: key, kind: 'clip' });
+      const job = await store.getJob(want.jobId);
+      if (job?.plan?.noClip?.includes(want.n - 1)) { job.plan.noClip = job.plan.noClip.filter((x) => x !== want.n - 1); await store.setPlan(job.id, job.plan); }
+      return reply(replyToken, [text(`รับคลิปซีน ${want.n} แล้ว (${(buf.length / 1048576).toFixed(1)} MB)\nพิมพ์ ทำวิดีโอ เพื่อเรนเดอร์ใหม่ หรือส่งคลิปซีนอื่นต่อได้ด้วย คลิป <เลขซีน>`)]);
+    } catch (err) {
+      console.error('clip_error', err?.message ?? err);
+      return reply(replyToken, [text(`รับคลิปไม่สำเร็จ: ${err?.message === 'clip_too_large' ? 'ไฟล์ใหญ่เกิน 60 MB' : 'ดาวน์โหลดจาก LINE ไม่ได้ ลองส่งใหม่'}`)]);
+    }
+  }
+
   /** Anyone may ask for their own LINE user ID (needed to register an expert). It grants nothing by itself. */
   const whoami = (userId, replyToken) => reply(replyToken, [text(`LINE user ID ของคุณ:\n${userId}\n(ส่งให้เจ้าของระบบเพื่อลงทะเบียน)`)]);
 
-  return { command, postback, whoami };
+  return { command, postback, whoami, media };
 }

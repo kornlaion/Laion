@@ -263,3 +263,31 @@ test('Gate C without registered experts: owner is the expert, approving the plan
   await h.postback('U1', bb, 'm2');
   assert.equal(b.calls.filter((x) => x.voiceUrl).length, 4);                 // video runs with no waiting for anyone else
 });
+
+test('คลิป: owner video attaches to a scene, is stored as a clip, and the next render uses it (clip too short is held, not looped)', { skip: !hasFfmpeg }, async () => {
+  const b = build();
+  const tmp = fs.mkdtempSync('/tmp/clip-');
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=540x960:d=1.5:r=24', '-pix_fmt', 'yuv420p', `${tmp}/c.mp4`]);
+  const clip = fs.readFileSync(`${tmp}/c.mp4`);
+  const h = createHandlers({ store: b.store, reply: async (t, m) => b.replies.push(m[0]), push: async (u, m) => b.pushes.push(m), gateway: b.gateway, images: createImageCache(), storage: b.storage, baseUrl: 'https://x.test', contactSheet, planProvider: 'anthropic', owners: ['U1'], content: async (id) => { assert.equal(id, 'M1'); return clip; } });
+  assert.deepEqual(parseCommand('คลิป 2'), { cmd: 'clip', n: 2 });
+  assert.deepEqual(parseCommand('ล้างคลิป 2'), { cmd: 'clearclip', n: 2 });
+  await h.command('U1', parseCommand('ผลิต love G1 รักแรกพบริมทะเล'), 'c0');
+  const a = parsePostback(b.pushes.at(-1)[1].template.actions[0].data);
+  await h.postback('U1', a, 'c1');
+  const bb = parsePostback(b.pushes.at(-1)[2].template.actions[0].data);
+  await h.postback('U1', bb, 'c2');
+  const ledgerAfterFirst = b.store.state.ledger.length;
+  await h.media('U1', { id: 'M1' }, 'c3');                                    // no pending scene yet
+  assert.match(b.replies.at(-1).text, /พิมพ์ คลิป/);
+  await h.command('U1', { cmd: 'clip', n: 2 }, 'c4');
+  await h.media('U1', { id: 'M1' }, 'c5');
+  assert.match(b.replies.at(-1).text, /รับคลิปซีน 2/);
+  assert.ok([...b.files.keys()].some((k) => /scene-1-clip-.*\.mp4$/.test(k)));
+  await h.command('U1', { cmd: 'makevideo' }, 'c6');                          // re-render with the clip: voices reused, one new render
+  assert.equal(b.store.state.ledger.length, ledgerAfterFirst + 1);
+  assert.match(b.pushes.at(-1)[0].text, /คลิปจริง 1 ซีน/);
+  await h.command('U1', { cmd: 'clearclip', n: 2 }, 'c7');
+  await h.command('U1', { cmd: 'makevideo' }, 'c8');                          // back to the first signature: replay, no charge
+  assert.equal(b.store.state.ledger.length, ledgerAfterFirst + 1);
+});
