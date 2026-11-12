@@ -29,7 +29,7 @@ const REASONS = {
   provider_error: 'ผู้ให้บริการตอบผิดพลาด',
 };
 
-export function createHandlers({ store, reply, push, gateway, images, storage, baseUrl, contactSheet, dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
+export function createHandlers({ store, reply, push, gateway, images, storage, baseUrl, contactSheet, planProvider = 'anthropic', dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
   const reasonText = (out) => `${REASONS[out.reason] ?? (out.reason.startsWith('gate_missing') ? 'ยังไม่ผ่านด่านอนุมัติที่จำเป็น' : out.reason)}${out.reason === 'provider_error' && out.message ? ` (${out.message})` : ''}`;
 
   /** Saves to R2 (permanent) when configured, else the temporary in-memory cache. Returns the id used in the URL. */
@@ -287,7 +287,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
           ]);
         }
         await reply(replyToken, [text(cmd.script ? `รับสคริปต์ของคุณแล้ว (${[...cmd.script].length} ตัวอักษร) กำลังเตรียมภาพและเสียง: ${cmd.topic}` : `กำลังเขียนสคริปต์: ${cmd.topic}\nรอสักครู่`)]);
-        const out = await gateway.run({ jobId, action: 'script', provider: 'anthropic', params: { channel: cmd.channel, grade: cmd.grade, topic: cmd.topic, ...(cmd.script ? { script: cmd.script } : {}) }, idempotencyKey: `script:${replyToken}`, actor: 'worker' });
+        const out = await gateway.run({ jobId, action: 'script', provider: planProvider, params: { channel: cmd.channel, grade: cmd.grade, topic: cmd.topic, ...(cmd.script ? { script: cmd.script } : {}) }, idempotencyKey: `script:${replyToken}`, actor: 'worker' });
         if (!out.ok) return push(userId, [text(`เขียนสคริปต์ไม่สำเร็จ: ${reasonText(out)}`)]);
         if (out.replay) return push(userId, [text('คำสั่งนี้ถูกทำไปแล้ว ไม่คิดเงินซ้ำ')]);
         const plan = out.result.plan;

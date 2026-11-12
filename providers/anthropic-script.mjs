@@ -49,23 +49,38 @@ export function parseVisual(raw, n) {
   return { title: String(o.title ?? '').trim().slice(0, 60), voice: o.voice === 'male' ? 'male' : 'female', prompts };
 }
 
+/** vendor 'anthropic' (Messages API) or 'openai' (Chat Completions). Same planning logic either way. Live shapes UNVERIFIED until the first real call. */
 export function createScriptAdapter({
-  apiKey = process.env.ANTHROPIC_API_KEY, model = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-5-5', fetchImpl = fetch,
+  vendor = 'anthropic', apiKey, model, fetchImpl = fetch,
 } = {}) {
+  const openai = vendor === 'openai';
+  apiKey ??= openai ? process.env.OPENAI_API_KEY : process.env.ANTHROPIC_API_KEY;
+  model ??= openai ? (process.env.OPENAI_PLAN_MODEL ?? 'gpt-4.1') : (process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-5-5');
+
   async function ask(system, user, maxTokens = 1800) {
-    if (!apiKey) throw new Error('ANTHROPIC_API_KEY missing');
-    const res = await fetchImpl('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),
-    });
+    if (!apiKey) throw new Error(`${openai ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY'} missing`);
+    const res = openai
+      ? await fetchImpl('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model, max_completion_tokens: maxTokens, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+      })
+      : await fetchImpl('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),
+      });
+    const tag = openai ? 'openai_text' : 'anthropic';
     if (!res.ok) {
       let detail = '';
-      try { detail = String((await res.json())?.error?.message ?? '').replace(/\s+/g, ' ').slice(0, 140); } catch { /* no body */ }   // API's own reason (e.g. low credit, bad model); never contains the key
-      throw new Error(`anthropic_${res.status}${detail ? `: ${detail}` : ''}`);
+      try { detail = String((await res.json())?.error?.message ?? '').replace(/\s+/g, ' ').slice(0, 140); } catch { /* no body */ }   // the API's own reason; never contains the key
+      throw new Error(`${tag}_${res.status}${detail ? `: ${detail}` : ''}`);
     }
     const json = await res.json();
-    return { text: (json.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join(''), id: json.id ?? null };
+    const out = openai
+      ? String(json.choices?.[0]?.message?.content ?? '')
+      : (json.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('');
+    return { text: out, id: json.id ?? null };
   }
 
   return {

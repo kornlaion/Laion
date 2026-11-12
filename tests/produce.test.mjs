@@ -186,3 +186,22 @@ test('เขียนเอง with Scene prompts: parsed, no Claude call, promp
   assert.equal(parseCommand(msg.replace('Scene 5\nMorning park walk', '')).prompts.length, 4);
   assert.equal(parseCommand('เขียนเอง love G1 x\n' + lines.join('\n') + '\nScene1\nonly one'), null);
 });
+
+test('OpenAI planner: chat completions request shape, JSON mode, plan built, error reason surfaced', async () => {
+  let seen;
+  const fetchImpl = async (url, init) => {
+    seen = { url, init, body: JSON.parse(init.body) };
+    const n = Number(/Number of scenes: (\d+)/.exec(seen.body.messages[1].content)?.[1]);
+    return { ok: true, json: async () => ({ id: 'cmpl_1', choices: [{ message: { content: JSON.stringify({ title: 'ธีม', voice: 'female', image_prompts: Array.from({ length: n }, (_, i) => `p${i}`) }) } }] }) };
+  };
+  const ad = createScriptAdapter({ vendor: 'openai', apiKey: 'sk-x', fetchImpl });
+  const out = await ad.call({ channel: 'love', grade: 'G1', topic: 'เรื่อง', script: LINES.join('\n') });
+  assert.equal(seen.url, 'https://api.openai.com/v1/chat/completions');
+  assert.equal(seen.init.headers.authorization, 'Bearer sk-x');
+  assert.equal(seen.body.model, 'gpt-4.1');
+  assert.deepEqual(seen.body.response_format, { type: 'json_object' });
+  assert.equal(out.plan.scenes.length, 4);
+  assert.match(out.plan.scenes[0].image_prompt, /^p0\. Japanese zen/);
+  const bad = createScriptAdapter({ vendor: 'openai', apiKey: 'k', fetchImpl: async () => ({ ok: false, status: 400, json: async () => ({ error: { message: 'model not found' } }) }) });
+  await assert.rejects(bad.call({ channel: 'love', grade: 'G1', topic: 't', script: LINES.join('\n') }), /openai_text_400: model not found/);
+});

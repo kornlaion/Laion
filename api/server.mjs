@@ -79,11 +79,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const storage = r2Configured() ? createR2() : null;
   console.log(storage ? 'storage: R2' : 'storage: memory only (set R2_* variables)');
   const assets = storage ? async (id) => { const a = await store.getAsset(id); return a ? storage.get(a.r2Key) : null; } : null;
-  const gateway = createGateway({ store, adapters: { openai: createOpenAIImageAdapter(), elevenlabs: createElevenLabsAdapter(), render: createRenderAdapter({ storage }), anthropic: createScriptAdapter() } });
+  const gateway = createGateway({ store, adapters: { openai: createOpenAIImageAdapter(), elevenlabs: createElevenLabsAdapter(), render: createRenderAdapter({ storage }), anthropic: createScriptAdapter(), 'openai-text': createScriptAdapter({ vendor: 'openai' }) } });
+  const planProvider = process.env.PLAN_PROVIDER === 'anthropic' ? 'anthropic' : 'openai-text';   // default: OpenAI writes the plan
+  console.log(`planner: ${planProvider}`);
   const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
   const baseUrl = process.env.PUBLIC_BASE_URL ?? (domain ? `https://${domain}` : '');
   if (!baseUrl) console.error('PUBLIC_BASE_URL / RAILWAY_PUBLIC_DOMAIN not set: image replies will fail');
-  const handlers = createHandlers({ store, reply: createLineReply(), push: createLinePush(), gateway, images, storage, baseUrl, contactSheet });
+  const handlers = createHandlers({ store, reply: createLineReply(), push: createLinePush(), gateway, images, storage, baseUrl, contactSheet, planProvider });
   const port = Number(process.env.PORT ?? 8787);
   makeServer({ secret, allow, handlers, images, assets }).listen(port, () => console.log(`listening on ${port}`));
 }
