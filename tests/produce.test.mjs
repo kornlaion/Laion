@@ -114,3 +114,26 @@ test('script failure is reported and not billed', async () => {
   assert.match(pushes.at(-1)[0].text, /ไม่สำเร็จ.*anthropic_401/);
   assert.equal(store.state.ledger.length, 0);
 });
+
+test('เขียนเอง: owner script is kept word for word (even over 400 chars), Claude only supplies image prompt + voice', async () => {
+  const msg = 'เขียนเอง love G1 เป็นคนดีไว้ ไม่เสียใจทีหลัง\nคนเรานะ… ไม่ว่าจะเจออะไรในชีวิต ก็อย่าลืมเป็นคนดี\n\n' + 'ต่อให้ต้องถูกหลอกสักกี่ครั้ง ก็อย่าเลือกที่จะไปหลอกใครกลับ '.repeat(10);
+  const cmd = parseCommand(msg);
+  assert.equal(cmd.cmd, 'custom');
+  assert.equal(cmd.topic, 'เป็นคนดีไว้ ไม่เสียใจทีหลัง');
+  assert.ok([...cmd.script].length > 400 && cmd.script.includes('ก็อย่าลืมเป็นคนดี'));
+  assert.equal(parseCommand('เขียนเอง love G1 x\nสั้นไป'), null);          // too short to be a script
+
+  const { store, h, pushes } = build();
+  const customFetch = async (u, i) => {
+    customFetch.body = JSON.parse(i.body);
+    return { ok: true, json: async () => ({ id: 'm', content: [{ type: 'text', text: JSON.stringify({ title: 'เป็นคนดีไว้', image_prompt: 'A calm person at sunrise on a hill, soft light, vertical', voice: 'male', script: 'MODEL TRIED TO REWRITE' }) }] }) };
+  };
+  store.createJob; // same store/gateway wiring as build(), but with a custom Claude fetch:
+  const g = createGateway({ store, dailyCapThb: 1000, adapters: { anthropic: createScriptAdapter({ apiKey: 'k', fetchImpl: customFetch }) } });
+  const h2 = createHandlers({ store, reply: async () => {}, push: async (u, m) => pushes.push(m), gateway: g, images: createImageCache(), baseUrl: 'x' });
+  await h2.command('U1', cmd, 'r0');
+  assert.match(customFetch.body.system, /Do NOT rewrite/);
+  assert.equal(store.jobs.at(-1).plan.script, cmd.script);                      // not the model's version
+  assert.equal(store.jobs.at(-1).plan.voice, 'male');
+  assert.match(pushes.at(-1)[0].text, /แผนงาน/);
+});

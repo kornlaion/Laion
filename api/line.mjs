@@ -19,6 +19,9 @@ export function isAllowed(userId, allowlist) {
 
 /** Thai command grammar from the doc. Returns null for anything unrecognised. */
 export function parseCommand(text) {
+  // Owner-written script: first line = command + title, following lines = the script, used word for word.
+  const custom = String(text ?? '').trim().match(/^เขียนเอง (\S+) (G[0-4])[ \t]+([^\n]{2,100})\r?\n([\s\S]{20,1200})$/);
+  if (custom) return { cmd: 'custom', channel: custom[1], grade: custom[2], topic: custom[3].trim(), script: custom[4].trim() };
   const t = String(text ?? '').trim().replace(/\s+/g, ' ');
   if (t === 'สถานะ') return { cmd: 'status' };
   if (t === 'งบ') return { cmd: 'budget' };

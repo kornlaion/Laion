@@ -144,7 +144,8 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         await reply(replyToken, [text(`กำลังทำวิดีโอ (เสียง + ซับไทย) ให้งาน: ${job.topic}\nใช้เวลาประมาณ 1-2 นาที`)]);
         return doVideo(userId, job, { text: cmd.text, voice: cmd.voice, key: replyToken });
       }
-      case 'produce': {
+      case 'produce':
+      case 'custom': {
         if (!gateway || !push) return reply(replyToken, [text('ระบบสร้างงานยังไม่ได้ตั้งค่า')]);
         if (!(await store.channelExists(cmd.channel))) return reply(replyToken, [text(`ไม่พบช่อง "${cmd.channel}"`)]);
         const jobId = await store.createJob({
@@ -152,8 +153,8 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
           capThb: GRADE_CAP_THB[cmd.grade], requiresExpert: EXPERT_CHANNELS.has(cmd.channel),
           idempotencyKey: `job:${crypto.randomUUID()}`,
         });
-        await reply(replyToken, [text(`กำลังเขียนสคริปต์: ${cmd.topic}\nรอสักครู่`)]);
-        const out = await gateway.run({ jobId, action: 'script', provider: 'anthropic', params: { channel: cmd.channel, grade: cmd.grade, topic: cmd.topic }, idempotencyKey: `script:${replyToken}`, actor: 'worker' });
+        await reply(replyToken, [text(cmd.script ? `รับสคริปต์ของคุณแล้ว (${[...cmd.script].length} ตัวอักษร) กำลังเตรียมภาพและเสียง: ${cmd.topic}` : `กำลังเขียนสคริปต์: ${cmd.topic}\nรอสักครู่`)]);
+        const out = await gateway.run({ jobId, action: 'script', provider: 'anthropic', params: { channel: cmd.channel, grade: cmd.grade, topic: cmd.topic, ...(cmd.script ? { script: cmd.script } : {}) }, idempotencyKey: `script:${replyToken}`, actor: 'worker' });
         if (!out.ok) return push(userId, [text(`เขียนสคริปต์ไม่สำเร็จ: ${reasonText(out)}`)]);
         if (out.replay) return push(userId, [text('คำสั่งนี้ถูกทำไปแล้ว ไม่คิดเงินซ้ำ')]);
         const plan = out.result.plan;

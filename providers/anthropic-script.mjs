@@ -16,16 +16,21 @@ const SYSTEM = `You write short vertical-video scripts for an automated media ch
 - "voice": "female" or "male", whichever suits the script.
 Rules: never invent statistics, prices, studies, quotes or news; do not name real brands or real people; keep it positive and safe for a general audience.`;
 
-export function parsePlan(raw) {
+const SYSTEM_CUSTOM = `The channel owner supplies a finished Thai script. Do NOT rewrite, shorten or add to it. Reply with ONLY a JSON object (no markdown) with exactly these keys:
+- "title": Thai title, at most 40 characters (use the owner's title if given).
+- "image_prompt": ONE concrete vertical scene in English that fits the mood of the script (subject, setting, light, mood, style). No text, letters, logos, watermarks or real people in the image.
+- "voice": "female" or "male", whichever suits the script.`;
+
+export function parsePlan(raw, { custom = false } = {}) {
   const s = String(raw ?? '');
   const a = s.indexOf('{'), b = s.lastIndexOf('}');
   if (a < 0 || b <= a) throw new Error('script_parse');
   let o;
   try { o = JSON.parse(s.slice(a, b + 1)); } catch { throw new Error('script_parse'); }
-  const script = String(o.script ?? '').trim();
+  const script = custom ? 'OWNER' : String(o.script ?? '').trim();
   const image_prompt = String(o.image_prompt ?? '').trim();
   if (!script || !image_prompt) throw new Error('script_incomplete');
-  if ([...script].length > 400) throw new Error('script_too_long');
+  if (!custom && [...script].length > 400) throw new Error('script_too_long');
   return { title: String(o.title ?? '').trim().slice(0, 60) || 'ไม่มีชื่อ', script, image_prompt, voice: o.voice === 'male' ? 'male' : 'female' };
 }
 
@@ -42,13 +47,14 @@ export function createScriptAdapter({
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
         body: JSON.stringify({
-          model, max_tokens: 1500, system: SYSTEM,
-          messages: [{ role: 'user', content: `Channel: ${p.channel}\nStyle: ${CHANNEL_GUIDE[p.channel] ?? 'Friendly and clear.'}\nGrade: ${p.grade}\nTopic (Thai): ${p.topic}` }],
+          model, max_tokens: 1500, system: p.script ? SYSTEM_CUSTOM : SYSTEM,
+          messages: [{ role: 'user', content: `Channel: ${p.channel}\nStyle: ${CHANNEL_GUIDE[p.channel] ?? 'Friendly and clear.'}\nGrade: ${p.grade}\n${p.script ? `Title (Thai): ${p.topic}\nOwner script (Thai):\n${p.script}` : `Topic (Thai): ${p.topic}`}` }],
         }),
       });
       if (!res.ok) throw new Error(`anthropic_${res.status}`);          // body not logged
       const json = await res.json();
-      const plan = parsePlan((json.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join(''));
+      const plan = parsePlan((json.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join(''), { custom: Boolean(p.script) });
+      if (p.script) plan.script = p.script;                          // the owner's words, byte for byte
       return { plan, externalId: json.id ?? null };
     },
   };
