@@ -1,6 +1,6 @@
 # Media Universe: stage 2 skeleton
 
-No npm install needed (Node 22, built-ins only).
+Tests need no install (Node 22 built-ins). Production needs `npm install` for `pg` (the host does this at deploy).
 
 ```
 node --test "tests/*.test.mjs"         # run tests
@@ -11,6 +11,9 @@ psql "$DATABASE_URL" -f db/schema.sql
 ## Layout
 - `db/schema.sql`: PostgreSQL schema (ledger is the only source of spend)
 - `gateway/policy.mjs`: kill switch, actor, idempotency, gates A-D, job/daily budget
+- `gateway/gateway.mjs`: the only path to providers (decide, task, ledger, audit); `store-memory.mjs` for tests, `store-pg.mjs` for Supabase (untested live)
+- `providers/openai-image.mjs`: ChatGPT Image adapter (request shape unverified live)
+- `db/seed_rates.sql`: starter provider_rates, re-check prices before use
 - `api/line.mjs`, `api/server.mjs`: signature check on raw body, allowlist, Thai commands, postbacks
 
 ## Next
