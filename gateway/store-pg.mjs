@@ -9,6 +9,12 @@ export function createPgStore(pool) {
       `select id, channel_id as "channelId", grade, requires_expert as "requiresExpert", cap_thb as "capThb"
          from jobs where id = $1`, [id]),
 
+    latestApprovedJob: (gate) => one(
+      `select j.id, j.channel_id as "channelId", j.grade, j.topic, j.requires_expert as "requiresExpert", j.cap_thb as "capThb"
+         from jobs j join approvals a on a.job_id = j.id
+        where a.gate = $1 and a.decision = 'approve'
+        order by j.created_at desc limit 1`, [gate]),
+
     async getRate(provider, model, unit) {
       const r = await one(
         `select price_usd from provider_rates

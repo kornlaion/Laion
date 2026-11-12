@@ -1,9 +1,16 @@
 import http from 'node:http';
 import { verifySignature, isAllowed, parseCommand, parsePostback } from './line.mjs';
 
-export function makeServer({ secret, allow, handlers }) {
+export function makeServer({ secret, allow, handlers, images }) {
   return http.createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/health') { res.writeHead(200).end('ok'); return; }
+    const img = req.method === 'GET' && images && req.url.match(/^\/img\/([0-9a-f]{48})\.jpg$/);
+    if (img) {
+      const buf = images.get(img[1]);
+      if (!buf) { res.writeHead(404).end(); return; }
+      res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': buf.length, 'cache-control': 'private, max-age=3600' }).end(buf);
+      return;
+    }
     if (req.method !== 'POST' || req.url !== '/line/webhook') { res.writeHead(404).end(); return; }
 
     const chunks = [];
@@ -45,12 +52,20 @@ export function makeServer({ secret, allow, handlers }) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const { connect, createPgStore } = await import('../gateway/store-pg.mjs');
   const { createHandlers } = await import('./app.mjs');
-  const { createLineReply } = await import('./line-client.mjs');
+  const { createLineReply, createLinePush } = await import('./line-client.mjs');
+  const { createImageCache } = await import('./images.mjs');
+  const { createGateway } = await import('../gateway/gateway.mjs');
+  const { createOpenAIImageAdapter } = await import('../providers/openai-image.mjs');
   const secret = process.env.LINE_CHANNEL_SECRET ?? '';
   const allow = new Set((process.env.LINE_ALLOWED_USER_IDS ?? '').split(',').filter(Boolean));
   if (!secret || allow.size === 0) { console.error('Set LINE_CHANNEL_SECRET and LINE_ALLOWED_USER_IDS'); process.exit(1); }
   const store = createPgStore(await connect());
-  const handlers = createHandlers({ store, reply: createLineReply() });
+  const images = createImageCache();
+  const gateway = createGateway({ store, adapters: { openai: createOpenAIImageAdapter() } });
+  const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
+  const baseUrl = process.env.PUBLIC_BASE_URL ?? (domain ? `https://${domain}` : '');
+  if (!baseUrl) console.error('PUBLIC_BASE_URL / RAILWAY_PUBLIC_DOMAIN not set: image replies will fail');
+  const handlers = createHandlers({ store, reply: createLineReply(), push: createLinePush(), gateway, images, baseUrl });
   const port = Number(process.env.PORT ?? 8787);
-  makeServer({ secret, allow, handlers }).listen(port, () => console.log(`listening on ${port}`));
+  makeServer({ secret, allow, handlers, images }).listen(port, () => console.log(`listening on ${port}`));
 }

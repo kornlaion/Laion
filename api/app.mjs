@@ -17,7 +17,17 @@ export function approvalCard(jobId, gate, body) {
   };
 }
 
-export function createHandlers({ store, reply, dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
+const REASONS = {
+  no_rate: 'ยังไม่มีราคาของโมเดลนี้ในตาราง provider_rates',
+  kill_switch_system: 'ระบบถูกพักอยู่ (พิมพ์ เริ่ม all)',
+  kill_switch_channel: 'ช่องนี้ถูกพักอยู่',
+  kill_switch_provider: 'ผู้ให้บริการนี้ถูกพักอยู่',
+  job_cap_exceeded: 'เกินเพดานงบของงานนี้',
+  daily_cap_exceeded: 'เกินเพดานงบรายวัน',
+  provider_error: 'ผู้ให้บริการภาพตอบผิดพลาด',
+};
+
+export function createHandlers({ store, reply, push, gateway, images, baseUrl, dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
   async function command(userId, cmd, replyToken) {
     switch (cmd.cmd) {
       case 'status': {
@@ -38,6 +48,24 @@ export function createHandlers({ store, reply, dailyCapThb = Number(process.env.
           idempotencyKey: `job:${crypto.randomUUID()}`,
         });
         return reply(replyToken, [approvalCard(jobId, 'A', `Gate A\n${cmd.channel} ${cmd.grade}\n${cmd.topic}\nเพดาน ฿${GRADE_CAP_THB[cmd.grade]}`)]);
+      }
+      case 'image': {
+        if (!gateway || !push || !images) return reply(replyToken, [text('การสร้างภาพยังไม่ได้ตั้งค่า')]);
+        const job = await store.latestApprovedJob('A');
+        if (!job) return reply(replyToken, [text('ยังไม่มีงานที่ผ่าน Gate A ให้พิมพ์ สร้าง <ช่อง> <เกรด> <หัวข้อ> แล้วกดอนุมัติก่อน')]);
+        await reply(replyToken, [text(`กำลังสร้างภาพ (${cmd.quality}) ให้งาน: ${job.topic}\nรอสักครู่`)]);
+        const out = await gateway.run({
+          jobId: job.id, action: 'image', provider: 'openai',
+          params: { prompt: cmd.prompt, quality: cmd.quality },
+          idempotencyKey: `img:${replyToken}`, actor: 'worker',
+        });
+        if (!out.ok) return push(userId, [text(`สร้างภาพไม่สำเร็จ: ${REASONS[out.reason] ?? (out.reason.startsWith('gate_missing') ? 'ยังไม่ผ่านด่านอนุมัติที่จำเป็น' : out.reason)}`)]);
+        if (out.replay) return push(userId, [text('คำสั่งนี้ถูกทำไปแล้ว ไม่คิดเงินซ้ำ')]);
+        const url = `${baseUrl}/img/${images.put(out.result.images[0])}.jpg`;
+        return push(userId, [
+          { type: 'image', originalContentUrl: url, previewImageUrl: url },
+          text(`เสร็จแล้ว ค่าใช้จ่ายโดยประมาณ ฿${out.costThb.toFixed(2)}${out.warn ? ' (ใกล้เพดานงบ)' : ''}\nราคาจริงดูที่ OpenAI Usage`),
+        ]);
       }
       case 'pause': {
         if (cmd.target === 'all') await store.setKill('system', '*');

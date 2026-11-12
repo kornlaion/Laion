@@ -21,11 +21,13 @@ export function createOpenAIImageAdapter({
           size: p.size ?? '1024x1536',      // portrait for Shorts / Reels
           quality: p.quality ?? 'medium',
           n: p.n ?? 1,
+          output_format: 'jpeg',            // small enough for LINE preview (<1MB)
+          output_compression: 80,
         }),
       });
-      if (!res.ok) throw new Error(`openai_image_${res.status}`);
+      if (!res.ok) throw new Error(`openai_image_${res.status}`);   // body not logged: may echo prompt
       const json = await res.json();
-      const images = (json.data ?? []).map((d) => Buffer.from(d.b64_json, 'base64'));
+      const images = (json.data ?? []).filter((d) => d.b64_json).map((d) => Buffer.from(d.b64_json, 'base64'));
       if (!images.length) throw new Error('openai_image_empty');
       return { images, externalId: json.created ? String(json.created) : null };
     },

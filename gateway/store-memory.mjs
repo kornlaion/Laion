@@ -29,6 +29,11 @@ export function createMemoryStore({ jobs = [], rates = [], approvals = [], kille
       for (const j of jobs) byState[j.state ?? 'planned'] = (byState[j.state ?? 'planned'] ?? 0) + 1;
       return { total: jobs.length, byState, spentToday: state.ledger.reduce((s, l) => s + l.costThb, 0) };
     },
+    async latestApprovedJob(gate) {
+      const ids = state.approvals.filter((a) => a.gate === gate && a.decision === 'approve').map((a) => a.jobId);
+      for (let i = jobs.length - 1; i >= 0; i--) if (ids.includes(jobs[i].id)) return jobs[i];
+      return null;
+    },
     async getJob(id) { return jobs.find((j) => j.id === id) ?? null; },
     async getRate(provider, model, unit) {
       const r = rates.find((x) => x.provider === provider && x.model === model && x.unit === unit);

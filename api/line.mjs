@@ -24,6 +24,8 @@ export function parseCommand(text) {
   if (t === 'งบ') return { cmd: 'budget' };
   let m = t.match(/^สร้าง (\S+) (G[0-4]) (.+)$/);
   if (m) return { cmd: 'create', channel: m[1], grade: m[2], topic: m[3] };
+  m = t.match(/^ภาพ (?:(low|medium|high) )?(.{3,800})$/);
+  if (m) return { cmd: 'image', quality: m[1] ?? 'low', prompt: m[2] };
   m = t.match(/^พัก (\S+)$/);
   if (m) return { cmd: 'pause', target: m[1] };
   m = t.match(/^เริ่ม (\S+)$/);
