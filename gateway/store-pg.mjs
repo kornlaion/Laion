@@ -37,6 +37,39 @@ export function createPgStore(pool) {
       return Number(r.s);
     },
 
+    async channelExists(id) { return Boolean(await one(`select 1 from channels where id = $1`, [id])); },
+
+    async createJob({ channelId, grade, topic, capThb, requiresExpert, idempotencyKey }) {
+      const r = await one(
+        `insert into jobs (channel_id, grade, topic, cap_thb, requires_expert, idempotency_key)
+         values ($1, $2, $3, $4, $5, $6) returning id`,
+        [channelId, grade, topic, capThb, requiresExpert, idempotencyKey]);
+      return r.id;
+    },
+
+    setJobState: (id, state) => pool.query(`update jobs set state = $2 where id = $1`, [id, state]),
+
+    async hasApproval(jobId, gate) {
+      return Boolean(await one(`select 1 from approvals where job_id = $1 and gate = $2`, [jobId, gate]));
+    },
+
+    addApproval: ({ jobId, gate, userId, decision }) =>
+      pool.query(`insert into approvals (job_id, gate, user_id, decision) values ($1, $2, $3, $4)`, [jobId, gate, userId, decision]),
+
+    setKill: (scope, key) =>
+      pool.query(`insert into kill_switch (scope, key) values ($1, $2) on conflict do nothing`, [scope, key]),
+
+    clearKill: (scope, key) => pool.query(`delete from kill_switch where scope = $1 and key = $2`, [scope, key]),
+
+    async summary() {
+      const { rows } = await pool.query(`select state, count(*)::int as n from jobs group by state`);
+      const byState = Object.fromEntries(rows.map((r) => [r.state, r.n]));
+      const total = rows.reduce((s, r) => s + r.n, 0);
+      const t = await one(
+        `select coalesce(sum(cost_thb), 0) as s from ledger where (at at time zone 'Asia/Bangkok')::date = ${BKK_TODAY}`, []);
+      return { total, byState, spentToday: Number(t.s) };
+    },
+
     async killed() {
       const { rows } = await pool.query(`select scope, key from kill_switch`);
       return {

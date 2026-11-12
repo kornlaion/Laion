@@ -13,6 +13,8 @@ psql "$DATABASE_URL" -f db/schema.sql
 - `gateway/policy.mjs`: kill switch, actor, idempotency, gates A-D, job/daily budget
 - `gateway/gateway.mjs`: the only path to providers (decide, task, ledger, audit); `store-memory.mjs` for tests, `store-pg.mjs` for Supabase (untested live)
 - `providers/openai-image.mjs`: ChatGPT Image adapter (request shape unverified live)
+- `db/seed_channels.sql`: the 5 channels (run once in Supabase)
+- `api/app.mjs`: LINE commands and approval buttons -> store (status, budget, create, pause/resume, Gate cards)
 - `db/seed_rates.sql`: starter provider_rates, re-check prices before use
 - `api/line.mjs`, `api/server.mjs`: signature check on raw body, allowlist, Thai commands, postbacks
 
@@ -23,4 +25,9 @@ psql "$DATABASE_URL" -f db/schema.sql
 4. n8n last: cron, digest, watchdog.
 
 ## Env
-`LINE_CHANNEL_SECRET`, `LINE_ALLOWED_USER_IDS` (comma separated), `DATABASE_URL`, provider keys in a secret manager, never in n8n.
+`LINE_CHANNEL_ACCESS_TOKEN` (replies), `OPENAI_API_KEY`, `DAILY_CAP_THB` (default 1000), `LINE_CHANNEL_SECRET`, `LINE_ALLOWED_USER_IDS` (comma separated), `DATABASE_URL`, provider keys in a secret manager, never in n8n.
+
+## Known gaps
+- Approval buttons are not yet single-use per nonce (a repeat tap is ignored by gate instead).
+- `store-pg.mjs` and the OpenAI adapter are untested against live services.
+- Cron/digest, Research Inbox and Veo/ElevenLabs adapters are not built.

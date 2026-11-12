@@ -26,6 +26,8 @@ export function parseCommand(text) {
   if (m) return { cmd: 'create', channel: m[1], grade: m[2], topic: m[3] };
   m = t.match(/^พัก (\S+)$/);
   if (m) return { cmd: 'pause', target: m[1] };
+  m = t.match(/^เริ่ม (\S+)$/);
+  if (m) return { cmd: 'resume', target: m[1] };
   m = t.match(/^วิจัย (https?:\/\/\S+)$/);
   if (m) return { cmd: 'research', url: m[1] };
   return null;

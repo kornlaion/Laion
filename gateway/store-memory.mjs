@@ -1,8 +1,34 @@
+import crypto from 'node:crypto';
 // In-memory store: same interface as store-pg.mjs. Used by tests and local dry runs.
-export function createMemoryStore({ jobs = [], rates = [], approvals = [], killed = {} } = {}) {
-  const state = { tasks: [], ledger: [], auditLog: [], approvals: [...approvals], killed, nextId: 1 };
+export function createMemoryStore({ jobs = [], rates = [], approvals = [], killed = {}, channels = ['love', 'mindbody', 'energy-ai', 'healthtech', 'pet'] } = {}) {
+  const state = { tasks: [], ledger: [], auditLog: [], approvals: [...approvals], killed: { ...killed }, nextId: 1 };
   return {
     state,
+    jobs,
+    async channelExists(id) { return channels.includes(id); },
+    async createJob(j) {
+      const id = crypto.randomUUID();   // same shape as Postgres uuid
+      jobs.push({ id, state: 'planned', ...j });
+      return id;
+    },
+    async setJobState(id, s) { jobs.find((j) => j.id === id).state = s; },
+    async hasApproval(jobId, gate) { return state.approvals.some((a) => a.jobId === jobId && a.gate === gate); },
+    async addApproval(a) { state.approvals.push(a); },
+    async setKill(scope, key) {
+      const k = state.killed;
+      if (scope === 'system') k.system = true;
+      else { const f = scope === 'channel' ? 'channels' : 'providers'; k[f] = [...new Set([...(k[f] ?? []), key])]; }
+    },
+    async clearKill(scope, key) {
+      const k = state.killed;
+      if (scope === 'system') k.system = false;
+      else { const f = scope === 'channel' ? 'channels' : 'providers'; k[f] = (k[f] ?? []).filter((x) => x !== key); }
+    },
+    async summary() {
+      const byState = {};
+      for (const j of jobs) byState[j.state ?? 'planned'] = (byState[j.state ?? 'planned'] ?? 0) + 1;
+      return { total: jobs.length, byState, spentToday: state.ledger.reduce((s, l) => s + l.costThb, 0) };
+    },
     async getJob(id) { return jobs.find((j) => j.id === id) ?? null; },
     async getRate(provider, model, unit) {
       const r = rates.find((x) => x.provider === provider && x.model === model && x.unit === unit);

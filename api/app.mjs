@@ -1,0 +1,71 @@
+import crypto from 'node:crypto';
+import { GRADE_CAP_THB } from '../gateway/policy.mjs';
+
+// Lane D channels (health / wellbeing) need expert Gate C before video, voice and publish.
+const EXPERT_CHANNELS = new Set(['mindbody', 'healthtech']);
+
+const text = (t) => ({ type: 'text', text: t });
+
+/** Approval card with three postback buttons. Label max 20 chars, body max 160 (LINE limits). */
+export function approvalCard(jobId, gate, body) {
+  const nonce = crypto.randomBytes(4).toString('hex');
+  const btn = (label, decision) => ({ type: 'postback', label, data: `gate:${jobId}:${gate}:${decision}:${nonce}` });
+  return {
+    type: 'template',
+    altText: `ขออนุมัติ Gate ${gate}`,
+    template: { type: 'buttons', text: body.slice(0, 160), actions: [btn('อนุมัติ', 'approve'), btn('แก้ไข', 'revise'), btn('ยกเลิก', 'reject')] },
+  };
+}
+
+export function createHandlers({ store, reply, dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
+  async function command(userId, cmd, replyToken) {
+    switch (cmd.cmd) {
+      case 'status': {
+        const s = await store.summary();
+        const lines = Object.entries(s.byState).map(([k, v]) => `${k}: ${v}`);
+        return reply(replyToken, [text([`งานทั้งหมด ${s.total}`, ...lines, `ใช้วันนี้ ฿${s.spentToday.toFixed(2)} / ฿${dailyCapThb}`].join('\n'))]);
+      }
+      case 'budget': {
+        const spent = await store.spentTodayThb();
+        const pct = dailyCapThb ? Math.round((spent / dailyCapThb) * 100) : 0;
+        return reply(replyToken, [text(`ใช้วันนี้ ฿${spent.toFixed(2)} จากเพดาน ฿${dailyCapThb} (${pct}%)`)]);
+      }
+      case 'create': {
+        if (!(await store.channelExists(cmd.channel))) return reply(replyToken, [text(`ไม่พบช่อง "${cmd.channel}"`)]);
+        const jobId = await store.createJob({
+          channelId: cmd.channel, grade: cmd.grade, topic: cmd.topic,
+          capThb: GRADE_CAP_THB[cmd.grade], requiresExpert: EXPERT_CHANNELS.has(cmd.channel),
+          idempotencyKey: `job:${crypto.randomUUID()}`,
+        });
+        return reply(replyToken, [approvalCard(jobId, 'A', `Gate A\n${cmd.channel} ${cmd.grade}\n${cmd.topic}\nเพดาน ฿${GRADE_CAP_THB[cmd.grade]}`)]);
+      }
+      case 'pause': {
+        if (cmd.target === 'all') await store.setKill('system', '*');
+        else if (await store.channelExists(cmd.target)) await store.setKill('channel', cmd.target);
+        else await store.setKill('provider', cmd.target);
+        return reply(replyToken, [text(`พักแล้ว: ${cmd.target}`)]);
+      }
+      case 'resume': {
+        if (cmd.target === 'all') await store.clearKill('system', '*');
+        else if (await store.channelExists(cmd.target)) await store.clearKill('channel', cmd.target);
+        else await store.clearKill('provider', cmd.target);
+        return reply(replyToken, [text(`เริ่มต่อแล้ว: ${cmd.target}`)]);
+      }
+      case 'research':
+        return reply(replyToken, [text('Research Inbox ยังไม่เปิดใช้งาน (ขั้นถัดไป)')]);
+      default:
+        return undefined;
+    }
+  }
+
+  async function postback(userId, pb, replyToken) {
+    const job = await store.getJob(pb.jobId);
+    if (!job) return reply(replyToken, [text('ไม่พบงานนี้')]);
+    if (await store.hasApproval(pb.jobId, pb.gate)) return reply(replyToken, [text(`Gate ${pb.gate} ตัดสินไปแล้ว`)]);
+    await store.addApproval({ jobId: pb.jobId, gate: pb.gate, userId, decision: pb.decision });
+    await store.setJobState(pb.jobId, pb.decision === 'approve' ? `gate_${pb.gate}_ok` : pb.decision);
+    return reply(replyToken, [text(`Gate ${pb.gate}: ${pb.decision}`)]);
+  }
+
+  return { command, postback };
+}
