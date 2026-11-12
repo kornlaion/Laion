@@ -1,7 +1,7 @@
 // Daily digest + budget watchdog, run inside the server (no extra service). Pushes to the owners on LINE.
 const bkk = (d) => {
-  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(d).map((x) => [x.type, x.value]));
-  return { date: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) };
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d).map((x) => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour), minute: Number(p.minute) };
 };
 
 export async function buildDigest({ store, dailyCapThb }) {
@@ -16,16 +16,26 @@ export async function buildDigest({ store, dailyCapThb }) {
   return lines.join('\n');
 }
 
-export function startScheduler({ store, push, owners, dailyCapThb, digestHour = Number(process.env.DIGEST_HOUR ?? 21), warnRatio = 0.8, tickMs = 60_000, now = () => new Date() }) {
-  let digestOn = null, warnOn = null;
+export function startScheduler({ store, push, owners, dailyCapThb, digestHour = Number(process.env.DIGEST_HOUR ?? 20), researchAt = process.env.RESEARCH_TIME ?? '07:30', research, warnRatio = 0.8, tickMs = 60_000, now = () => new Date() }) {
+  let digestOn = null, warnOn = null, researchOn = null;
+  const [rh, rm] = researchAt.split(':').map(Number);
   const send = async (text) => { for (const id of owners) { try { await push(id, [{ type: 'text', text }]); } catch (e) { console.error('digest_push_error', e?.message ?? e); } } };
   async function tick() {
-    const { date, hour } = bkk(now());
+    const { date, hour, minute } = bkk(now());
     try {
       const spent = await store.spentTodayThb();
       if (spent >= dailyCapThb * warnRatio && warnOn !== date) {
         warnOn = date;
         await send(`เตือนงบ: ใช้วันนี้ ฿${spent.toFixed(2)} ถึง ${Math.round((spent / dailyCapThb) * 100)}% ของเพดานรายวัน ฿${dailyCapThb}`);
+      }
+      if (research && researchOn !== date && (hour > rh || (hour === rh && minute >= rm))) {
+        researchOn = date;
+        const done = [], failed = [];
+        for (const ch of await store.listChannels()) {
+          try { const r = await research(ch, date); (r.ok ? done : failed).push(r.ok ? (r.replay ? `${ch} (มีแล้ว)` : `${ch} ${r.count}`) : `${ch}: ${r.reason}`); }
+          catch (e) { failed.push(`${ch}: ${e?.message ?? e}`); }
+        }
+        await send(['ไอเดียหัวข้อวันนี้พร้อมแล้ว', done.join(' · ') || '-', ...(failed.length ? ['ไม่สำเร็จ:', ...failed] : []), '', 'พิมพ์ ไอเดีย <ช่อง> เช่น ไอเดีย love เพื่อดูและเลือกผลิต'].join('\n'));
       }
       if (hour >= digestHour && digestOn !== date) {
         digestOn = date;

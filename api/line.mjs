@@ -60,12 +60,21 @@ export function parseCommand(text) {
   if (m) return { cmd: 'pause', target: m[1] };
   m = t.match(/^เริ่ม (\S+)$/);
   if (m) return { cmd: 'resume', target: m[1] };
+  m = t.match(/^ไอเดีย (\S+)$/);
+  if (m) return { cmd: 'ideas', channel: m[1] };
+  m = t.match(/^ไอเดียใหม่ (\S+)$/);
+  if (m) return { cmd: 'ideasnew', channel: m[1] };
   m = t.match(/^วิจัย (https?:\/\/\S+)$/);
   if (m) return { cmd: 'research', url: m[1] };
   return null;
 }
 
 /** Postback data for approval buttons: `gate:<jobId>:<A|B|C|D>:<approve|revise|reject>:<nonce>` */
+export function parseIdeaPostback(data) {
+  const m = String(data ?? '').match(/^idea:([0-9a-f-]{36}):(make|src|skip)$/);
+  return m ? { ideaId: m[1], action: m[2] } : null;
+}
+
 export function parsePostback(data) {
   const m = String(data ?? '').match(/^gate:([0-9a-f-]{36}):([ABCD]):(approve|revise|reject):([A-Za-z0-9]{8,})$/);
   return m ? { jobId: m[1], gate: m[2], decision: m[3], nonce: m[4] } : null;

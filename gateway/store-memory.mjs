@@ -43,7 +43,16 @@ export function createMemoryStore({ jobs = [], rates = [], approvals = [], kille
       const l = (state.assets ?? []).filter((a) => a.jobId === jobId && a.kind === kind); return l.at(-1) ?? null;
     },
     async getAsset(id) { return (state.assets ?? []).find((a) => a.id === id) ?? null; },
-    async stuckJobs(hours) { const cut = Date.now() - hours * 3600_000; return jobs.filter((j) => !['gate_D_ok', 'reject'].includes(j.state) && new Date(j.createdAt).getTime() < cut).map((j) => ({ id: j.id, channelId: j.channelId, grade: j.grade, topic: j.topic, state: j.state })); },
+    async stuckJobs(hours) { const cut = Date.now() - hours * 3600_000; return jobs.filter((j) => !['gate_D_ok', 'reject', 'research'].includes(j.state) && new Date(j.createdAt).getTime() < cut).map((j) => ({ id: j.id, channelId: j.channelId, grade: j.grade, topic: j.topic, state: j.state })); },
+    async listChannels() { return [...channels]; },
+    async addIdeas(channelId, runDate, ideas) { state.ideas ??= []; ideas.forEach((x, i) => state.ideas.push({ id: crypto.randomUUID(), channelId, runDate, rank: i + 1, status: 'new', ...x })); },
+    async listIdeas(channelId, runDate) {
+      const all = (state.ideas ?? []).filter((x) => x.channelId === channelId);
+      const d = runDate ?? all.map((x) => x.runDate).sort().at(-1);
+      return all.filter((x) => x.runDate === d).sort((a, b) => a.rank - b.rank);
+    },
+    async getIdea(id) { return (state.ideas ?? []).find((x) => x.id === id) ?? null; },
+    async setIdeaStatus(id, status) { const x = (state.ideas ?? []).find((y) => y.id === id); if (x) x.status = status; },
     async recentJobs(n = 5) { return jobs.slice(-n).reverse().map((j) => ({ id: j.id, channelId: j.channelId, grade: j.grade, topic: j.topic, state: j.state })); },
     async getJob(id) { return jobs.find((j) => j.id === id) ?? null; },
     async getRate(provider, model, unit) {

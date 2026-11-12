@@ -4,7 +4,7 @@
 // Request shape follows the public Messages API; UNVERIFIED live until the first real call.
 import { sceneCount, splitScenes } from '../render/scenes.mjs';
 
-const CHANNEL_GUIDE = {
+export const CHANNEL_GUIDE = {
   love: 'Warm, romantic, hopeful. Short heartfelt lines about love and small happy moments.',
   mindbody: 'Calm, gentle, grounding. General wellbeing habits only. NEVER give medical advice, diagnoses, treatments or health claims.',
   'energy-ai': 'Clear, curious, factual tone about EVs, energy and AI tools. Keep claims general; do not invent numbers, prices or specs.',

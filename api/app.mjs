@@ -9,6 +9,26 @@ const EXPERT_CHANNELS = new Set(['mindbody', 'healthtech']);
 const text = (t) => ({ type: 'text', text: t });
 
 /** Approval card with three postback buttons. Label max 20 chars, body max 160 (LINE limits). */
+const todayBkk = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(new Date());
+
+/** Carousel of topic ideas (one column per idea; LINE allows 10 columns, 3 buttons each, text up to 120 chars with a title). */
+export function ideasCarousel(ideas) {
+  return {
+    type: 'template', altText: 'ไอเดียหัวข้อวันนี้',
+    template: {
+      type: 'carousel',
+      columns: ideas.slice(0, 10).map((x) => ({
+        title: `${x.rank}. ${x.title}`.slice(0, 40), text: (x.hook || '-').slice(0, 120),
+        actions: [
+          { type: 'postback', label: 'ผลิตเรื่องนี้', data: `idea:${x.id}:make` },
+          { type: 'postback', label: 'แหล่งที่มา', data: `idea:${x.id}:src` },
+          { type: 'postback', label: 'ข้าม', data: `idea:${x.id}:skip` },
+        ],
+      })),
+    },
+  };
+}
+
 export function approvalCard(jobId, gate, body) {
   const nonce = crypto.randomBytes(4).toString('hex');
   const btn = (label, decision) => ({ type: 'postback', label, data: `gate:${jobId}:${gate}:${decision}:${nonce}` });
@@ -29,7 +49,7 @@ const REASONS = {
   provider_error: 'ผู้ให้บริการตอบผิดพลาด',
 };
 
-export function createHandlers({ store, reply, push, gateway, images, storage, baseUrl, contactSheet, planProvider = 'anthropic', experts = new Set(), owners = [], content, dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
+export function createHandlers({ store, reply, push, gateway, images, storage, baseUrl, contactSheet, planProvider = 'anthropic', experts = new Set(), owners = [], content, research, dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
   const reasonText = (out) => `${REASONS[out.reason] ?? (out.reason.startsWith('gate_missing') ? 'ยังไม่ผ่านด่านอนุมัติที่จำเป็น' : out.reason)}${out.reason === 'provider_error' && out.message ? ` (${out.message})` : ''}`;
 
   /** Saves to R2 (permanent) when configured, else the temporary in-memory cache. Returns the id used in the URL. */
@@ -352,6 +372,24 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         await store.setPlan(job.id, job.plan);
         return reply(replyToken, [text(`ซีน ${cmd.n} กลับไปใช้ภาพนิ่ง (พิมพ์ ทำวิดีโอ เพื่อเรนเดอร์ใหม่)`)]);
       }
+      case 'ideas':
+      case 'ideasnew': {
+        if (!(await store.channelExists(cmd.channel))) return reply(replyToken, [text(`ไม่พบช่อง "${cmd.channel}"`)]);
+        if (cmd.cmd === 'ideasnew') {
+          if (!research) return reply(replyToken, [text('ระบบหาไอเดียยังไม่ได้ตั้งค่า')]);
+          await reply(replyToken, [text(`กำลังหาไอเดียช่อง ${cmd.channel} ใช้เวลาประมาณ 1 นาที`)]);
+          const r = await research(cmd.channel);
+          if (!r.ok) return push(userId, [text(`หาไอเดียไม่สำเร็จ: ${reasonText({ reason: r.reason })}`)]);
+        }
+        const list = await store.listIdeas(cmd.channel);
+        const fresh = list.filter((x) => x.status === 'new');
+        if (!fresh.length) {
+          const none = text(`ยังไม่มีไอเดียใหม่ของช่อง ${cmd.channel} (พิมพ์ ไอเดียใหม่ ${cmd.channel} เพื่อสั่งหาตอนนี้)`);
+          return cmd.cmd === 'ideasnew' ? push(userId, [none]) : reply(replyToken, [none]);
+        }
+        const msgs = [text(`ไอเดียช่อง ${cmd.channel} (${list[0].runDate}) ปัดดูได้ แล้วกด "ผลิตเรื่องนี้"`), ideasCarousel(fresh)];
+        return cmd.cmd === 'ideasnew' ? push(userId, msgs) : reply(replyToken, msgs);
+      }
       case 'scene':
         return sceneCommand(userId, cmd, replyToken);
       case 'makevideo': {
@@ -442,6 +480,19 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
   }
 
 
+  async function idea(userId, ip, replyToken) {
+    const x = await store.getIdea(ip.ideaId);
+    if (!x) return reply(replyToken, [text('ไม่พบไอเดียนี้')]);
+    if (ip.action === 'src') {
+      const src = (x.sources ?? []).map((s2, i) => `${i + 1}. ${s2.title || 'แหล่งข้อมูล'}\n${s2.url}`).join('\n');
+      return reply(replyToken, [text(src ? `แหล่งที่มา: ${x.title}\n${src}` : 'ไม่มีแหล่งอ้างอิงที่ตรวจสอบได้ของไอเดียนี้ ควรตรวจข้อเท็จจริงเองก่อนผลิต')]);
+    }
+    if (x.status !== 'new') return reply(replyToken, [text(x.status === 'picked' ? 'เลือกไอเดียนี้ไปแล้ว' : 'ไอเดียนี้ถูกข้ามไปแล้ว')]);
+    if (ip.action === 'skip') { await store.setIdeaStatus(x.id, 'skipped'); return reply(replyToken, [text('ข้ามแล้ว')]); }
+    await store.setIdeaStatus(x.id, 'picked');
+    return command(userId, { cmd: 'produce', channel: x.channelId, grade: 'G1', topic: `${x.title} — ${x.hook}`.slice(0, 200) }, replyToken);
+  }
+
   /** A video message from the owner: attach it as the clip of the scene chosen with "คลิป <n>". */
   async function media(userId, msg, replyToken) {
     const want = pendingClip.get(userId);
@@ -465,5 +516,5 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
   /** Anyone may ask for their own LINE user ID (needed to register an expert). It grants nothing by itself. */
   const whoami = (userId, replyToken) => reply(replyToken, [text(`LINE user ID ของคุณ:\n${userId}\n(ส่งให้เจ้าของระบบเพื่อลงทะเบียน)`)]);
 
-  return { command, postback, whoami, media };
+  return { command, postback, whoami, media, idea };
 }

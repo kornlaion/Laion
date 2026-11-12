@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { verifySignature, isAllowed, parseCommand, parsePostback } from './line.mjs';
+import { verifySignature, isAllowed, parseCommand, parsePostback, parseIdeaPostback } from './line.mjs';
 
 export function makeServer({ secret, allow, handlers, images, assets, experts = new Set() }) {
   return http.createServer(async (req, res) => {
@@ -56,7 +56,9 @@ export function makeServer({ secret, allow, handlers, images, assets, experts = 
           await handlers.media(userId, ev.message, ev.replyToken);
         } else if (ev.type === 'postback') {
           const pb = parsePostback(ev.postback?.data);
+          const ip = pb ? null : parseIdeaPostback(ev.postback?.data);
           if (pb) await handlers.postback(userId, pb, ev.replyToken);
+          else if (ip && handlers.idea && isAllowed(userId, allow)) await handlers.idea(userId, ip, ev.replyToken);
         }
       } catch (err) {
         console.error('handler_error', err?.message ?? err);
@@ -77,6 +79,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const { createElevenLabsAdapter } = await import('../providers/elevenlabs.mjs');
   const { createRenderAdapter } = await import('../providers/render.mjs');
   const { createScriptAdapter } = await import('../providers/anthropic-script.mjs');
+  const { createResearchAdapter } = await import('../providers/openai-research.mjs');
+  const { researchChannel } = await import('../ops/research.mjs');
   const secret = process.env.LINE_CHANNEL_SECRET ?? '';
   const allow = new Set((process.env.LINE_ALLOWED_USER_IDS ?? '').split(',').filter(Boolean));
   if (!secret || allow.size === 0) { console.error('Set LINE_CHANNEL_SECRET and LINE_ALLOWED_USER_IDS'); process.exit(1); }
@@ -86,16 +90,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const storage = r2Configured() ? createR2() : null;
   console.log(storage ? 'storage: R2' : 'storage: memory only (set R2_* variables)');
   const assets = storage ? async (id) => { const a = await store.getAsset(id); return a ? storage.get(a.r2Key) : null; } : null;
-  const gateway = createGateway({ store, adapters: { openai: createOpenAIImageAdapter(), elevenlabs: createElevenLabsAdapter(), render: createRenderAdapter({ storage }), anthropic: createScriptAdapter(), 'openai-text': createScriptAdapter({ vendor: 'openai' }) } });
+  const gateway = createGateway({ store, adapters: { openai: createOpenAIImageAdapter(), elevenlabs: createElevenLabsAdapter(), render: createRenderAdapter({ storage }), anthropic: createScriptAdapter(), 'openai-text': createScriptAdapter({ vendor: 'openai' }), 'openai-research': createResearchAdapter() } });
   const experts = new Set((process.env.EXPERT_LINE_USER_IDS ?? '').split(',').map((x) => x.trim()).filter(Boolean));
   const planProvider = process.env.PLAN_PROVIDER === 'anthropic' ? 'anthropic' : 'openai-text';   // default: OpenAI writes the plan
   console.log(`planner: ${planProvider}`);
   const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
   const baseUrl = process.env.PUBLIC_BASE_URL ?? (domain ? `https://${domain}` : '');
   if (!baseUrl) console.error('PUBLIC_BASE_URL / RAILWAY_PUBLIC_DOMAIN not set: image replies will fail');
-  const handlers = createHandlers({ store, reply: createLineReply(), push: createLinePush(), gateway, images, storage, baseUrl, contactSheet, planProvider, experts, owners: [...allow], content: createLineContent() });
+  const handlers = createHandlers({ store, reply: createLineReply(), push: createLinePush(), gateway, images, storage, baseUrl, contactSheet, planProvider, experts, owners: [...allow], content: createLineContent(), research: (channelId) => researchChannel({ store, gateway, channelId, date: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(new Date()), force: true }) });
   const { startScheduler } = await import('../ops/digest.mjs');
-  startScheduler({ store, push: createLinePush(), owners: [...allow], dailyCapThb: Number(process.env.DAILY_CAP_THB ?? 1000) });
+  startScheduler({ store, push: createLinePush(), owners: [...allow], dailyCapThb: Number(process.env.DAILY_CAP_THB ?? 1000),
+    research: (channelId, date) => researchChannel({ store, gateway, channelId, date }) });
   const port = Number(process.env.PORT ?? 8787);
   makeServer({ secret, allow, handlers, images, assets, experts }).listen(port, () => console.log(`listening on ${port}`));
 }

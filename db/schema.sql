@@ -140,3 +140,5 @@ create table audit_log (
   payload_hash text,
   at           timestamptz not null default now()
 );
+
+-- see db/migrate_003_research.sql (research_ideas table)

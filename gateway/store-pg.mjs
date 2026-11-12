@@ -85,9 +85,24 @@ export function createPgStore(pool) {
     async stuckJobs(hours) {
       const { rows } = await pool.query(
         `select id, channel_id as "channelId", grade, topic, state from jobs
-          where state not in ('gate_D_ok', 'reject') and created_at < now() - make_interval(hours => $1::int) order by created_at asc limit 50`, [hours]);
+          where state not in ('gate_D_ok', 'reject', 'research') and created_at < now() - make_interval(hours => $1::int) order by created_at asc limit 50`, [hours]);
       return rows;
     },
+    async listChannels() { return (await pool.query(`select id from channels order by id`)).rows.map((r) => r.id); },
+    async addIdeas(channelId, runDate, ideas) {
+      for (let i = 0; i < ideas.length; i++) {
+        await pool.query(`insert into research_ideas (channel_id, run_date, rank, title, hook, sources) values ($1, $2, $3, $4, $5, $6::jsonb)`,
+          [channelId, runDate, i + 1, ideas[i].title, ideas[i].hook, JSON.stringify(ideas[i].sources ?? [])]);
+      }
+    },
+    async listIdeas(channelId, runDate) {
+      const { rows } = await pool.query(
+        `select id, channel_id as "channelId", run_date::text as "runDate", rank, title, hook, sources, status from research_ideas
+          where channel_id = $1 and run_date = coalesce($2::date, (select max(run_date) from research_ideas where channel_id = $1)) order by rank`, [channelId, runDate ?? null]);
+      return rows;
+    },
+    getIdea: (id) => one(`select id, channel_id as "channelId", title, hook, sources, status from research_ideas where id = $1`, [id]),
+    setIdeaStatus: (id, status) => pool.query(`update research_ideas set status = $2 where id = $1`, [id, status]),
     async recentJobs(n = 5) {
       const { rows } = await pool.query(`select id, channel_id as "channelId", grade, topic, state from jobs order by created_at desc limit $1`, [n]);
       return rows;
