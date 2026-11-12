@@ -165,3 +165,24 @@ test('เขียนเอง: owner script is kept word for word (even over 40
   assert.equal(store.jobs.at(-1).plan.scenes.map((x) => x.text).join('\n'), cmd.script.replace(/\n\s*\n/g, '\n'));   // scenes cover the script verbatim
   assert.match(pushes.at(-1)[0].text, /แผนงาน/);
 });
+
+test('เขียนเอง with Scene prompts: parsed, no Claude call, prompts used as written, voice line honoured', async () => {
+  const lines = ['คนเรานะ… ก็อย่าลืมเป็นคนดี', 'ต่อให้ต้องถูกหลอกสักกี่ครั้ง', 'ก็อย่าเลือกที่จะไปหลอกใครกลับ', 'แต่สิ่งสำคัญคือความสบายใจ', 'ขอบคุณตัวเอง และเป็นกำลังใจให้ทุกคน'];
+  const msg = `เขียนเอง love G1 เป็นคนดีไว้\n${lines.join('\n')}\nเสียงชาย\nScene1\nCinematic photo, a man in a cafe,\nrainy window, vertical 9:16\nScene2\nA man walking calmly\nScene3\nDinner with mother\nScene4\nReturning a wallet\nScene 5\nMorning park walk`;
+  const cmd = parseCommand(msg);
+  assert.equal(cmd.prompts.length, 5);
+  assert.equal(cmd.prompts[0], 'Cinematic photo, a man in a cafe, rainy window, vertical 9:16');
+  assert.equal(cmd.voice, 'male');
+  assert.equal(cmd.script, lines.join('\n'));
+  const { store, h, pushes, calls } = build();
+  claudeFetch.calls = 0;
+  await h.command('U1', cmd, 'r0');
+  assert.equal(claudeFetch.calls, 0);
+  assert.equal(store.state.ledger.length, 0);
+  const plan = store.jobs.at(-1).plan;
+  assert.equal(plan.scenes.length, 5);
+  assert.equal(plan.scenes[3].image_prompt, 'Returning a wallet');           // no ZEN style appended
+  assert.match(pushes.at(-1)[0].text, /ภาพตามพรอมต์ของคุณ/);
+  assert.equal(parseCommand(msg.replace('Scene 5\nMorning park walk', '')).prompts.length, 4);
+  assert.equal(parseCommand('เขียนเอง love G1 x\n' + lines.join('\n') + '\nScene1\nonly one'), null);
+});

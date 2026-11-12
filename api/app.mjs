@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { GRADE_CAP_THB } from '../gateway/policy.mjs';
 import { STYLE_ZEN } from '../providers/anthropic-script.mjs';
+import { splitScenes } from '../render/scenes.mjs';
 
 // Lane D channels (health / wellbeing) need expert Gate C before video, voice and publish.
 const EXPERT_CHANNELS = new Set(['mindbody', 'healthtech']);
@@ -205,7 +206,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
 
   const planText = (plan, cost) => {
     const rows = plan.scenes.map((sc, i) => `${i + 1}. ${[...sc.text.replace(/\n/g, ' ')].slice(0, 28).join('')}…\n   ภาพ: ${[...(sc.visual ?? '')].slice(0, 70).join('')}`).join('\n');
-    return `แผนงาน: ${plan.title}\n${plan.scenes.length} ซีน, ${[...plan.script].length} ตัวอักษร, เสียง${plan.voice === 'male' ? 'ชาย' : 'หญิง'}, โทน ZEN\n\n${rows}\n\nค่าเขียนสคริปต์ประมาณ ฿${cost.toFixed(2)}`;
+    return `แผนงาน: ${plan.title}\n${plan.scenes.length} ซีน, ${[...plan.script].length} ตัวอักษร, เสียง${plan.voice === 'male' ? 'ชาย' : 'หญิง'}${plan.custom ? ', ภาพตามพรอมต์ของคุณ' : ', โทน ZEN'}\n\n${rows}\n\n${plan.custom ? 'ไม่มีค่าเขียนสคริปต์ (ใช้พรอมต์ของคุณ)' : `ค่าเขียนสคริปต์ประมาณ ฿${cost.toFixed(2)}`}`;
   };
 
   async function sceneCommand(userId, cmd, replyToken) {
@@ -214,7 +215,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     if (!job?.plan?.scenes) return reply(replyToken, [text(NO_JOB)]);
     const i = cmd.n - 1;
     if (i < 0 || i >= job.plan.scenes.length) return reply(replyToken, [text(`งานนี้มี ${job.plan.scenes.length} ซีน (พิมพ์ ซีน 1 ถึง ${job.plan.scenes.length})`)]);
-    if (cmd.prompt) job.plan.overrides = { ...(job.plan.overrides ?? {}), [i]: `${cmd.prompt}. ${STYLE_ZEN}` };
+    if (cmd.prompt) job.plan.overrides = { ...(job.plan.overrides ?? {}), [i]: job.plan.custom ? cmd.prompt : `${cmd.prompt}. ${STYLE_ZEN}` };
     if (cmd.prompt) await store.setPlan(job.id, job.plan);
     await reply(replyToken, [text(`กำลังสร้างซีน ${cmd.n} ใหม่ รอสักครู่`)]);
     return doScenes(userId, job, [i], { force: true, keyBase: `regen:${replyToken}` });
@@ -273,6 +274,18 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
           capThb: GRADE_CAP_THB[cmd.grade], requiresExpert: EXPERT_CHANNELS.has(cmd.channel),
           idempotencyKey: `job:${crypto.randomUUID()}`,
         });
+        if (cmd.prompts) {                                   // owner supplied the scene prompts: no model call, no cost
+          const texts = splitScenes(cmd.script, cmd.prompts.length);
+          if (texts.length !== cmd.prompts.length) return reply(replyToken, [text(`เรื่องของคุณมี ${texts.length} บรรทัด แต่ใส่พรอมต์ ${cmd.prompts.length} ซีน จำนวนบรรทัดของเรื่องต้องไม่น้อยกว่าจำนวนซีน (แต่ละซีนต้องมีอย่างน้อย 1 บรรทัด)`)]);
+          const plan = { title: cmd.topic, script: cmd.script, voice: cmd.voice ?? 'female', custom: true,
+            scenes: texts.map((t, i) => ({ text: t, visual: cmd.prompts[i], image_prompt: cmd.prompts[i] })) };
+          await store.setPlan(jobId, plan);
+          await reply(replyToken, [text('รับเรื่องและพรอมต์ภาพของคุณแล้ว')]);
+          return push(userId, [
+            text(planText(plan, 0)),
+            approvalCard(jobId, 'A', `Gate A แผนงาน\n${cmd.channel} ${cmd.grade}\n${plan.title}\nอนุมัติแล้วระบบสร้างภาพ ${plan.scenes.length} ซีนต่อทันที`),
+          ]);
+        }
         await reply(replyToken, [text(cmd.script ? `รับสคริปต์ของคุณแล้ว (${[...cmd.script].length} ตัวอักษร) กำลังเตรียมภาพและเสียง: ${cmd.topic}` : `กำลังเขียนสคริปต์: ${cmd.topic}\nรอสักครู่`)]);
         const out = await gateway.run({ jobId, action: 'script', provider: 'anthropic', params: { channel: cmd.channel, grade: cmd.grade, topic: cmd.topic, ...(cmd.script ? { script: cmd.script } : {}) }, idempotencyKey: `script:${replyToken}`, actor: 'worker' });
         if (!out.ok) return push(userId, [text(`เขียนสคริปต์ไม่สำเร็จ: ${reasonText(out)}`)]);
