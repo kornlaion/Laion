@@ -116,3 +116,38 @@ test('Gate B: card follows the image; revise does not lock; approve is final; B 
   await h.command('U1', parseCommand('ภาพ แมวอีก'), 'r7');
   assert.equal(pushes.at(-1).length, 2);                                                     // no new B card once decided
 });
+
+import { createElevenLabsAdapter } from '../providers/elevenlabs.mjs';
+
+test('voice: billed per 1k chars at list price, mp3 saved and served, replay not billed, failure not billed', async () => {
+  const seen = {};
+  const fetchImpl = async (url, init) => {
+    seen.url = url; seen.body = JSON.parse(init.body); seen.key = init.headers['xi-api-key'];
+    return { ok: true, headers: { get: () => 'req1' }, arrayBuffer: async () => Buffer.from('mp3bytes') };
+  };
+  const vrates = [{ provider: 'elevenlabs', model: 'eleven_v4', unit: '1k_chars', priceUsd: 0.08 }];
+  const store = createMemoryStore({ rates: vrates });
+  const replies = []; const pushes = []; const puts = [];
+  const gateway = createGateway({ store, adapters: { elevenlabs: createElevenLabsAdapter({ apiKey: 'k', voiceId: 'VID', model: 'eleven_v4', fetchImpl }) }, dailyCapThb: 1000 });
+  const h = createHandlers({ store, reply: async (t, m) => replies.push(m[0]), push: async (u, m) => pushes.push(m), gateway, images: createImageCache(),
+    storage: { put: async (k, b, t) => puts.push([k, t]) }, baseUrl: 'https://x.test' });
+  await h.command('U1', parseCommand('สร้าง love G1 x'), 'r0');
+  await h.postback('U1', parsePostback(replies.at(-1).template.actions[0].data), 'r1');
+  const text = 'สวัสดีครับ'.repeat(20);                              // 200 chars
+  await h.command('U1', parseCommand(`เสียง ${text}`), 'r2');
+  assert.match(seen.url, /text-to-speech\/VID\?output_format=mp3_44100_128/);
+  assert.equal(seen.body.model_id, 'eleven_v4');
+  assert.equal(seen.key, 'k');
+  assert.equal(store.state.ledger.length, 1);
+  assert.ok(Math.abs(store.state.ledger[0].costUsd - 0.016) < 1e-9);          // 0.2k chars x $0.08
+  assert.match(pushes.at(-1)[0].text, /https:\/\/x\.test\/aud\/[0-9a-f-]{36}\.mp3/);
+  assert.match(puts[0][0], /\.mp3$/); assert.equal(puts[0][1], 'audio/mpeg');
+  await h.command('U1', parseCommand(`เสียง ${text}`), 'r2');                 // redelivery
+  assert.equal(store.state.ledger.length, 1);
+
+  const bad = createGateway({ store, adapters: { elevenlabs: createElevenLabsAdapter({ apiKey: 'k', voiceId: 'V', fetchImpl: async () => ({ ok: false, status: 422 }) }) }, dailyCapThb: 1000 });
+  const h2 = createHandlers({ store, reply: async () => {}, push: async (u, m) => pushes.push(m), gateway: bad, images: createImageCache(), baseUrl: 'https://x.test' });
+  await h2.command('U1', parseCommand('เสียง ทดสอบ'), 'r9');
+  assert.match(pushes.at(-1)[0].text, /ไม่สำเร็จ.*elevenlabs_422/);
+  assert.equal(store.state.ledger.length, 1);
+});

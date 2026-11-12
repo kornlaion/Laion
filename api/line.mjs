@@ -26,6 +26,8 @@ export function parseCommand(text) {
   if (m) return { cmd: 'create', channel: m[1], grade: m[2], topic: m[3] };
   m = t.match(/^ภาพ (?:(low|medium|high) )?(.{3,800})$/);
   if (m) return { cmd: 'image', quality: m[1] ?? 'low', prompt: m[2] };
+  m = t.match(/^เสียง (.{2,400})$/);
+  if (m) return { cmd: 'voice', text: m[1] };
   m = t.match(/^พัก (\S+)$/);
   if (m) return { cmd: 'pause', target: m[1] };
   m = t.match(/^เริ่ม (\S+)$/);

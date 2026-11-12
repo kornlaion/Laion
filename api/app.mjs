@@ -28,6 +28,20 @@ const REASONS = {
 };
 
 export function createHandlers({ store, reply, push, gateway, images, storage, baseUrl, dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
+  const reasonText = (out) => `${REASONS[out.reason] ?? (out.reason.startsWith('gate_missing') ? 'ยังไม่ผ่านด่านอนุมัติที่จำเป็น' : out.reason)}${out.reason === 'provider_error' && out.message ? ` (${out.message})` : ''}`;
+
+  /** Saves to R2 (permanent) when configured, else the temporary in-memory cache. Returns the id used in the URL. */
+  async function saveFile(job, out, buf, contentType, ext, kind) {
+    if (storage) {
+      try {
+        const key = `jobs/${job.id}/${out.taskId}.${ext}`;
+        await storage.put(key, buf, contentType);
+        return await store.addAsset({ jobId: job.id, r2Key: key, kind });
+      } catch (err) { console.error('storage_error', err?.message ?? err); }
+    }
+    return images.put(buf);
+  }
+
   async function command(userId, cmd, replyToken) {
     switch (cmd.cmd) {
       case 'status': {
@@ -59,18 +73,9 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
           params: { prompt: cmd.prompt, quality: cmd.quality },
           idempotencyKey: `img:${replyToken}`, actor: 'worker',
         });
-        if (!out.ok) return push(userId, [text(`สร้างภาพไม่สำเร็จ: ${REASONS[out.reason] ?? (out.reason.startsWith('gate_missing') ? 'ยังไม่ผ่านด่านอนุมัติที่จำเป็น' : out.reason)}`)]);
+        if (!out.ok) return push(userId, [text(`สร้างภาพไม่สำเร็จ: ${reasonText(out)}`)]);
         if (out.replay) return push(userId, [text('คำสั่งนี้ถูกทำไปแล้ว ไม่คิดเงินซ้ำ')]);
-        let name;
-        if (storage) {                       // permanent copy in R2, served later by asset id
-          try {
-            const key = `jobs/${job.id}/${out.taskId}.jpg`;
-            await storage.put(key, out.result.images[0], 'image/jpeg');
-            name = await store.addAsset({ jobId: job.id, r2Key: key, kind: 'image' });
-          } catch (err) { console.error('storage_error', err?.message ?? err); }
-        }
-        name ??= images.put(out.result.images[0]);   // fallback: temporary in-memory copy
-        const url = `${baseUrl}/img/${name}.jpg`;
+        const url = `${baseUrl}/img/${await saveFile(job, out, out.result.images[0], 'image/jpeg', 'jpg', 'image')}.jpg`;
         const gateB = (await store.hasApproval(job.id, 'B'))
           ? []
           : [approvalCard(job.id, 'B', `Gate B ตรวจภาพ\n${job.topic}\nอนุมัติก่อนไปขั้นวิดีโอ (Veo)`)];
@@ -79,6 +84,20 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
           text(`เสร็จแล้ว ค่าใช้จ่ายโดยประมาณ ฿${out.costThb.toFixed(2)}${out.warn ? ' (ใกล้เพดานงบ)' : ''}\nราคาจริงดูที่ OpenAI Usage`),
           ...gateB,
         ]);
+      }
+      case 'voice': {
+        if (!gateway || !push || !images) return reply(replyToken, [text('การสร้างเสียงยังไม่ได้ตั้งค่า')]);
+        const job = await store.latestApprovedJob('A');
+        if (!job) return reply(replyToken, [text('ยังไม่มีงานที่ผ่าน Gate A ให้พิมพ์ สร้าง <ช่อง> <เกรด> <หัวข้อ> แล้วกดอนุมัติก่อน')]);
+        await reply(replyToken, [text(`กำลังสร้างเสียง ${[...cmd.text].length} ตัวอักษร รอสักครู่`)]);
+        const out = await gateway.run({
+          jobId: job.id, action: 'voice', provider: 'elevenlabs',
+          params: { text: cmd.text }, idempotencyKey: `voice:${replyToken}`, actor: 'worker',
+        });
+        if (!out.ok) return push(userId, [text(`สร้างเสียงไม่สำเร็จ: ${reasonText(out)}`)]);
+        if (out.replay) return push(userId, [text('คำสั่งนี้ถูกทำไปแล้ว ไม่คิดเงินซ้ำ')]);
+        const url = `${baseUrl}/aud/${await saveFile(job, out, out.result.audio, 'audio/mpeg', 'mp3', 'voice')}.mp3`;
+        return push(userId, [text(`เสร็จแล้ว ฟังที่นี่: ${url}\nค่าใช้จ่ายโดยประมาณ ฿${out.costThb.toFixed(2)}\nราคาจริงดูที่ ElevenLabs Usage`)]);
       }
       case 'pause': {
         if (cmd.target === 'all') await store.setKill('system', '*');

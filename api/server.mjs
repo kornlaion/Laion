@@ -4,12 +4,12 @@ import { verifySignature, isAllowed, parseCommand, parsePostback } from './line.
 export function makeServer({ secret, allow, handlers, images, assets }) {
   return http.createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/health') { res.writeHead(200).end('ok'); return; }
-    const img = req.method === 'GET' && images && req.url.match(/^\/img\/([0-9a-f]{48}|[0-9a-f-]{36})\.jpg$/);
+    const img = req.method === 'GET' && images && req.url.match(/^\/(?:img|aud)\/([0-9a-f]{48}|[0-9a-f-]{36})\.(jpg|mp3)$/);
     if (img) {
       let buf = img[1].length === 48 ? images.get(img[1]) : null;
       if (img[1].length === 36 && assets) { try { buf = await assets(img[1]); } catch (e) { console.error('asset_error', e?.message ?? e); } }
       if (!buf) { res.writeHead(404).end(); return; }
-      res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': buf.length, 'cache-control': 'private, max-age=3600' }).end(buf);
+      res.writeHead(200, { 'content-type': img[2] === 'mp3' ? 'audio/mpeg' : 'image/jpeg', 'content-length': buf.length, 'cache-control': 'private, max-age=3600' }).end(buf);
       return;
     }
     if (req.method !== 'POST' || req.url !== '/line/webhook') { res.writeHead(404).end(); return; }
@@ -57,6 +57,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const { createImageCache } = await import('./images.mjs');
   const { createGateway } = await import('../gateway/gateway.mjs');
   const { createOpenAIImageAdapter } = await import('../providers/openai-image.mjs');
+  const { createElevenLabsAdapter } = await import('../providers/elevenlabs.mjs');
   const secret = process.env.LINE_CHANNEL_SECRET ?? '';
   const allow = new Set((process.env.LINE_ALLOWED_USER_IDS ?? '').split(',').filter(Boolean));
   if (!secret || allow.size === 0) { console.error('Set LINE_CHANNEL_SECRET and LINE_ALLOWED_USER_IDS'); process.exit(1); }
@@ -66,7 +67,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const storage = r2Configured() ? createR2() : null;
   console.log(storage ? 'storage: R2' : 'storage: memory only (set R2_* variables)');
   const assets = storage ? async (id) => { const a = await store.getAsset(id); return a ? storage.get(a.r2Key) : null; } : null;
-  const gateway = createGateway({ store, adapters: { openai: createOpenAIImageAdapter() } });
+  const gateway = createGateway({ store, adapters: { openai: createOpenAIImageAdapter(), elevenlabs: createElevenLabsAdapter() } });
   const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
   const baseUrl = process.env.PUBLIC_BASE_URL ?? (domain ? `https://${domain}` : '');
   if (!baseUrl) console.error('PUBLIC_BASE_URL / RAILWAY_PUBLIC_DOMAIN not set: image replies will fail');
