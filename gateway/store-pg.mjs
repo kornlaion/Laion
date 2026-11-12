@@ -15,6 +15,12 @@ export function createPgStore(pool) {
         where a.gate = $1 and a.decision = 'approve'
         order by j.created_at desc limit 1`, [gate]),
 
+    async addAsset({ jobId, r2Key, kind }) {
+      const r = await one(`insert into assets (job_id, r2_key, kind) values ($1, $2, $3) returning id`, [jobId, r2Key, kind]);
+      return r.id;
+    },
+    getAsset: (id) => one(`select id, job_id as "jobId", r2_key as "r2Key", kind from assets where id = $1`, [id]),
+
     async getRate(provider, model, unit) {
       const r = await one(
         `select price_usd from provider_rates

@@ -27,7 +27,7 @@ const REASONS = {
   provider_error: 'ผู้ให้บริการภาพตอบผิดพลาด',
 };
 
-export function createHandlers({ store, reply, push, gateway, images, baseUrl, dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
+export function createHandlers({ store, reply, push, gateway, images, storage, baseUrl, dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
   async function command(userId, cmd, replyToken) {
     switch (cmd.cmd) {
       case 'status': {
@@ -61,7 +61,16 @@ export function createHandlers({ store, reply, push, gateway, images, baseUrl, d
         });
         if (!out.ok) return push(userId, [text(`สร้างภาพไม่สำเร็จ: ${REASONS[out.reason] ?? (out.reason.startsWith('gate_missing') ? 'ยังไม่ผ่านด่านอนุมัติที่จำเป็น' : out.reason)}`)]);
         if (out.replay) return push(userId, [text('คำสั่งนี้ถูกทำไปแล้ว ไม่คิดเงินซ้ำ')]);
-        const url = `${baseUrl}/img/${images.put(out.result.images[0])}.jpg`;
+        let name;
+        if (storage) {                       // permanent copy in R2, served later by asset id
+          try {
+            const key = `jobs/${job.id}/${out.taskId}.jpg`;
+            await storage.put(key, out.result.images[0], 'image/jpeg');
+            name = await store.addAsset({ jobId: job.id, r2Key: key, kind: 'image' });
+          } catch (err) { console.error('storage_error', err?.message ?? err); }
+        }
+        name ??= images.put(out.result.images[0]);   // fallback: temporary in-memory copy
+        const url = `${baseUrl}/img/${name}.jpg`;
         return push(userId, [
           { type: 'image', originalContentUrl: url, previewImageUrl: url },
           text(`เสร็จแล้ว ค่าใช้จ่ายโดยประมาณ ฿${out.costThb.toFixed(2)}${out.warn ? ' (ใกล้เพดานงบ)' : ''}\nราคาจริงดูที่ OpenAI Usage`),

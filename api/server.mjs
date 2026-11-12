@@ -1,12 +1,13 @@
 import http from 'node:http';
 import { verifySignature, isAllowed, parseCommand, parsePostback } from './line.mjs';
 
-export function makeServer({ secret, allow, handlers, images }) {
+export function makeServer({ secret, allow, handlers, images, assets }) {
   return http.createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/health') { res.writeHead(200).end('ok'); return; }
-    const img = req.method === 'GET' && images && req.url.match(/^\/img\/([0-9a-f]{48})\.jpg$/);
+    const img = req.method === 'GET' && images && req.url.match(/^\/img\/([0-9a-f]{48}|[0-9a-f-]{36})\.jpg$/);
     if (img) {
-      const buf = images.get(img[1]);
+      let buf = img[1].length === 48 ? images.get(img[1]) : null;
+      if (img[1].length === 36 && assets) { try { buf = await assets(img[1]); } catch (e) { console.error('asset_error', e?.message ?? e); } }
       if (!buf) { res.writeHead(404).end(); return; }
       res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': buf.length, 'cache-control': 'private, max-age=3600' }).end(buf);
       return;
@@ -61,11 +62,15 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (!secret || allow.size === 0) { console.error('Set LINE_CHANNEL_SECRET and LINE_ALLOWED_USER_IDS'); process.exit(1); }
   const store = createPgStore(await connect());
   const images = createImageCache();
+  const { createR2, r2Configured } = await import('../storage/r2.mjs');
+  const storage = r2Configured() ? createR2() : null;
+  console.log(storage ? 'storage: R2' : 'storage: memory only (set R2_* variables)');
+  const assets = storage ? async (id) => { const a = await store.getAsset(id); return a ? storage.get(a.r2Key) : null; } : null;
   const gateway = createGateway({ store, adapters: { openai: createOpenAIImageAdapter() } });
   const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
   const baseUrl = process.env.PUBLIC_BASE_URL ?? (domain ? `https://${domain}` : '');
   if (!baseUrl) console.error('PUBLIC_BASE_URL / RAILWAY_PUBLIC_DOMAIN not set: image replies will fail');
-  const handlers = createHandlers({ store, reply: createLineReply(), push: createLinePush(), gateway, images, baseUrl });
+  const handlers = createHandlers({ store, reply: createLineReply(), push: createLinePush(), gateway, images, storage, baseUrl });
   const port = Number(process.env.PORT ?? 8787);
-  makeServer({ secret, allow, handlers, images }).listen(port, () => console.log(`listening on ${port}`));
+  makeServer({ secret, allow, handlers, images, assets }).listen(port, () => console.log(`listening on ${port}`));
 }

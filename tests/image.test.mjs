@@ -61,3 +61,37 @@ test('provider failure is reported and not billed', async () => {
   assert.match(pushes.at(-1)[0].text, /ไม่สำเร็จ/);
   assert.equal(store.state.ledger.length, 0);
 });
+
+import { signRequest, createR2 } from '../storage/r2.mjs';
+import { makeServer } from '../api/server.mjs';
+
+test('R2 signer is deterministic and signs the headers it sends', () => {
+  const a = { method: 'PUT', host: 'acc.r2.cloudflarestorage.com', path: '/b/jobs/x.jpg', body: Buffer.from('d'), accessKeyId: 'AK', secretAccessKey: 'SK', now: new Date('2026-11-12T12:00:00Z') };
+  const s1 = signRequest(a), s2 = signRequest(a);
+  assert.equal(s1.authorization, s2.authorization);
+  assert.match(s1.authorization, /Credential=AK\/20261112\/auto\/s3\/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=[0-9a-f]{64}/);
+  assert.notEqual(signRequest({ ...a, body: Buffer.from('e') }).authorization, s1.authorization);
+});
+
+test('with storage: image saved to R2, asset row written, served by asset id', async () => {
+  const puts = [];
+  const storage = { put: async (k, b, t) => puts.push([k, b.toString(), t]), get: async () => Buffer.from('jpegdata') };
+  const store = createMemoryStore({ rates });
+  const pushes = []; const replies = [];
+  const gateway = createGateway({ store, adapters: { openai: createOpenAIImageAdapter({ apiKey: 'k', fetchImpl: okFetch }) }, dailyCapThb: 1000 });
+  const images = createImageCache();
+  const h = createHandlers({ store, reply: async (t, m) => replies.push(m[0]), push: async (u, m) => pushes.push(m), gateway, images, storage, baseUrl: 'https://x.test' });
+  await h.command('U1', parseCommand('สร้าง love G1 x'), 'r0');
+  await h.postback('U1', parsePostback(replies.at(-1).template.actions[0].data), 'r1');
+  await h.command('U1', parseCommand('ภาพ แมว'), 'r2');
+  assert.equal(puts.length, 1);
+  assert.match(puts[0][0], /^jobs\/.+\.jpg$/);
+  const id = pushes.at(-1)[0].originalContentUrl.match(/img\/(.+)\.jpg/)[1];
+  assert.equal(id.length, 36);
+  const server = makeServer({ secret: 's', allow: new Set(), handlers: {}, images, assets: async (i) => (await store.getAsset(i)) && storage.get() });
+  await new Promise((r) => server.listen(0, r));
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/img/${id}.jpg`);
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), 'jpegdata');
+  server.close();
+});
