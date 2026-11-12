@@ -82,6 +82,12 @@ export function createPgStore(pool) {
 
     clearKill: (scope, key) => pool.query(`delete from kill_switch where scope = $1 and key = $2`, [scope, key]),
 
+    async stuckJobs(hours) {
+      const { rows } = await pool.query(
+        `select id, channel_id as "channelId", grade, topic, state from jobs
+          where state not in ('gate_D_ok', 'reject') and created_at < now() - make_interval(hours => $1::int) order by created_at asc limit 50`, [hours]);
+      return rows;
+    },
     async recentJobs(n = 5) {
       const { rows } = await pool.query(`select id, channel_id as "channelId", grade, topic, state from jobs order by created_at desc limit $1`, [n]);
       return rows;

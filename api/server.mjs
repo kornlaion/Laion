@@ -94,6 +94,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const baseUrl = process.env.PUBLIC_BASE_URL ?? (domain ? `https://${domain}` : '');
   if (!baseUrl) console.error('PUBLIC_BASE_URL / RAILWAY_PUBLIC_DOMAIN not set: image replies will fail');
   const handlers = createHandlers({ store, reply: createLineReply(), push: createLinePush(), gateway, images, storage, baseUrl, contactSheet, planProvider, experts, owners: [...allow], content: createLineContent() });
+  const { startScheduler } = await import('../ops/digest.mjs');
+  startScheduler({ store, push: createLinePush(), owners: [...allow], dailyCapThb: Number(process.env.DAILY_CAP_THB ?? 1000) });
   const port = Number(process.env.PORT ?? 8787);
   makeServer({ secret, allow, handlers, images, assets, experts }).listen(port, () => console.log(`listening on ${port}`));
 }

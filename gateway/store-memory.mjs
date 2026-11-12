@@ -8,7 +8,7 @@ export function createMemoryStore({ jobs = [], rates = [], approvals = [], kille
     async channelExists(id) { return channels.includes(id); },
     async createJob(j) {
       const id = crypto.randomUUID();   // same shape as Postgres uuid
-      jobs.push({ id, state: 'planned', ...j });
+      jobs.push({ id, state: 'planned', createdAt: j.createdAt ?? new Date(), ...j });
       return id;
     },
     async setPlan(id, plan) { jobs.find((j) => j.id === id).plan = plan; },
@@ -43,6 +43,7 @@ export function createMemoryStore({ jobs = [], rates = [], approvals = [], kille
       const l = (state.assets ?? []).filter((a) => a.jobId === jobId && a.kind === kind); return l.at(-1) ?? null;
     },
     async getAsset(id) { return (state.assets ?? []).find((a) => a.id === id) ?? null; },
+    async stuckJobs(hours) { const cut = Date.now() - hours * 3600_000; return jobs.filter((j) => !['gate_D_ok', 'reject'].includes(j.state) && new Date(j.createdAt).getTime() < cut).map((j) => ({ id: j.id, channelId: j.channelId, grade: j.grade, topic: j.topic, state: j.state })); },
     async recentJobs(n = 5) { return jobs.slice(-n).reverse().map((j) => ({ id: j.id, channelId: j.channelId, grade: j.grade, topic: j.topic, state: j.state })); },
     async getJob(id) { return jobs.find((j) => j.id === id) ?? null; },
     async getRate(provider, model, unit) {
