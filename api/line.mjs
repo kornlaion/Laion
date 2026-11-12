@@ -28,6 +28,8 @@ export function parseCommand(text) {
   if (m) return { cmd: 'image', quality: m[1] ?? 'low', prompt: m[2] };
   m = t.match(/^เสียง (?:(ชาย|หญิง) )?(.{2,400})$/);
   if (m) return { cmd: 'voice', voice: m[1] === 'ชาย' ? 'male' : m[1] === 'หญิง' ? 'female' : undefined, text: m[2] };
+  m = t.match(/^วิดีโอ (?:(ชาย|หญิง) )?(.{2,400})$/);
+  if (m) return { cmd: 'video', voice: m[1] === 'ชาย' ? 'male' : m[1] === 'หญิง' ? 'female' : undefined, text: m[2] };
   m = t.match(/^พัก (\S+)$/);
   if (m) return { cmd: 'pause', target: m[1] };
   m = t.match(/^เริ่ม (\S+)$/);

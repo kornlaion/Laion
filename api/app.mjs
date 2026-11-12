@@ -99,6 +99,35 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         const url = `${baseUrl}/aud/${await saveFile(job, out, out.result.audio, 'audio/mpeg', 'mp3', 'voice')}.mp3`;
         return push(userId, [text(`เสร็จแล้ว ฟังที่นี่: ${url}\nค่าใช้จ่ายโดยประมาณ ฿${out.costThb.toFixed(2)}\nราคาจริงดูที่ ElevenLabs Usage`)]);
       }
+      case 'video': {
+        if (!gateway || !push || !storage) return reply(replyToken, [text('การทำวิดีโอต้องตั้งค่า R2 ก่อน')]);
+        const job = await store.latestApprovedJob('A');
+        if (!job) return reply(replyToken, [text('ยังไม่มีงานที่ผ่าน Gate A ให้พิมพ์ สร้าง ... แล้วกดอนุมัติก่อน')]);
+        if (!(await store.approvedGates(job.id)).includes('B')) return reply(replyToken, [text('ต้องผ่าน Gate B (อนุมัติภาพ) ก่อนทำวิดีโอ: พิมพ์ ภาพ ... แล้วกดอนุมัติที่การ์ด')]);
+        const img = await store.latestAsset(job.id, 'image');
+        if (!img) return reply(replyToken, [text('งานนี้ยังไม่มีภาพที่เก็บถาวร พิมพ์ ภาพ ... ก่อน')]);
+        await reply(replyToken, [text(`กำลังทำวิดีโอ (เสียง + ซับไทย) ให้งาน: ${job.topic}\nใช้เวลาประมาณ 1-2 นาที`)]);
+
+        const v = await gateway.run({ jobId: job.id, action: 'voice', provider: 'elevenlabs', params: { text: cmd.text, voice: cmd.voice }, idempotencyKey: `vid-voice:${replyToken}`, actor: 'worker' });
+        if (!v.ok) return push(userId, [text(`ขั้นเสียงไม่สำเร็จ: ${reasonText(v)}`)]);
+        if (v.replay) return push(userId, [text('คำสั่งนี้ถูกทำไปแล้ว ไม่คิดเงินซ้ำ')]);
+        const audioKey = `jobs/${job.id}/${v.taskId}.mp3`;
+        try { await storage.put(audioKey, v.result.audio, 'audio/mpeg'); await store.addAsset({ jobId: job.id, r2Key: audioKey, kind: 'voice' }); }
+        catch (err) { console.error('storage_error', err?.message ?? err); return push(userId, [text('บันทึกไฟล์เสียงไม่สำเร็จ (R2)')]); }
+
+        const r = await gateway.run({ jobId: job.id, action: 'render', provider: 'render', params: { imageKey: img.r2Key, audioKey, text: cmd.text }, idempotencyKey: `vid-render:${replyToken}`, actor: 'worker' });
+        if (!r.ok) return push(userId, [text(`ขั้นเรนเดอร์ไม่สำเร็จ: ${reasonText(r)}`)]);
+        if (r.replay) return push(userId, [text('คำสั่งนี้ถูกทำไปแล้ว ไม่คิดเงินซ้ำ')]);
+        const videoKey = `jobs/${job.id}/${r.taskId}.mp4`;
+        let vidId;
+        try { await storage.put(videoKey, r.result.video, 'video/mp4'); vidId = await store.addAsset({ jobId: job.id, r2Key: videoKey, kind: 'video' }); }
+        catch (err) { console.error('storage_error', err?.message ?? err); return push(userId, [text('บันทึกวิดีโอไม่สำเร็จ (R2)')]); }
+        const total = v.costThb + r.costThb;
+        return push(userId, [
+          text(`วิดีโอเสร็จแล้ว (${r.result.seconds.toFixed(1)} วินาที) ดูที่นี่: ${baseUrl}/vid/${vidId}.mp4\nค่าใช้จ่ายโดยประมาณ ฿${total.toFixed(2)} (เสียง ฿${v.costThb.toFixed(2)} + เรนเดอร์ ฿${r.costThb.toFixed(2)})`),
+          approvalCard(job.id, 'D', `Gate D ตรวจวิดีโอสุดท้าย\n${job.topic}\nอนุมัติก่อนโพสต์`),
+        ]);
+      }
       case 'pause': {
         if (cmd.target === 'all') await store.setKill('system', '*');
         else if (await store.channelExists(cmd.target)) await store.setKill('channel', cmd.target);
@@ -122,12 +151,16 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     const job = await store.getJob(pb.jobId);
     if (!job) return reply(replyToken, [text('ไม่พบงานนี้')]);
     if (await store.hasApproval(pb.jobId, pb.gate)) return reply(replyToken, [text(`Gate ${pb.gate} ตัดสินไปแล้ว`)]);
-    if (pb.gate === 'B' && !(await store.approvedGates(pb.jobId)).includes('A')) return reply(replyToken, [text('ต้องผ่าน Gate A ก่อน')]);
+    const ok = await store.approvedGates(pb.jobId);
+    if (pb.gate === 'B' && !ok.includes('A')) return reply(replyToken, [text('ต้องผ่าน Gate A ก่อน')]);
+    if (pb.gate === 'D' && !(ok.includes('A') && ok.includes('B'))) return reply(replyToken, [text('ต้องผ่าน Gate A และ B ก่อน')]);
     await store.addApproval({ jobId: pb.jobId, gate: pb.gate, userId, decision: pb.decision });
     await store.setJobState(pb.jobId, pb.decision === 'approve' ? `gate_${pb.gate}_ok` : pb.decision);
     const next = {
-      approve: pb.gate === 'B' ? 'ผ่าน Gate B แล้ว (ขั้นวิดีโอ Veo ยังไม่เปิดใช้งาน)' : `Gate ${pb.gate}: อนุมัติแล้ว`,
-      revise: pb.gate === 'B' ? 'รับทราบ ให้แก้: พิมพ์ ภาพ <คำบรรยายใหม่> เพื่อสร้างใหม่' : `Gate ${pb.gate}: ขอแก้ไข`,
+      approve: pb.gate === 'B' ? 'ผ่าน Gate B แล้ว ทำวิดีโอต่อได้: วิดีโอ <ข้อความพากย์>'
+        : pb.gate === 'D' ? 'ผ่าน Gate D แล้ว (การโพสต์อัตโนมัติยังไม่เปิดใช้งาน ดาวน์โหลดไฟล์ไปโพสต์เองได้)' : `Gate ${pb.gate}: อนุมัติแล้ว`,
+      revise: pb.gate === 'B' ? 'รับทราบ ให้แก้: พิมพ์ ภาพ <คำบรรยายใหม่> เพื่อสร้างใหม่'
+        : pb.gate === 'D' ? 'รับทราบ ให้แก้: พิมพ์ วิดีโอ <ข้อความพากย์ใหม่> เพื่อทำใหม่' : `Gate ${pb.gate}: ขอแก้ไข`,
       reject: `Gate ${pb.gate}: ยกเลิกงานนี้`,
     }[pb.decision];
     return reply(replyToken, [text(next)]);

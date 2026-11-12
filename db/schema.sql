@@ -67,7 +67,8 @@ create table assets (
   job_id        uuid references jobs(id),
   r2_key        text not null,
   kind          text not null,
-  ai_generated  boolean not null default true
+  ai_generated  boolean not null default true,
+  created_at    timestamptz not null default now()
 );
 
 create table rights (

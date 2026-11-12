@@ -19,6 +19,8 @@ export function createPgStore(pool) {
       const r = await one(`insert into assets (job_id, r2_key, kind) values ($1, $2, $3) returning id`, [jobId, r2Key, kind]);
       return r.id;
     },
+    latestAsset: (jobId, kind) => one(
+      `select id, job_id as "jobId", r2_key as "r2Key", kind from assets where job_id = $1 and kind = $2 order by created_at desc limit 1`, [jobId, kind]),
     getAsset: (id) => one(`select id, job_id as "jobId", r2_key as "r2Key", kind from assets where id = $1`, [id]),
 
     async getRate(provider, model, unit) {
