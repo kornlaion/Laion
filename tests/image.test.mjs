@@ -95,3 +95,24 @@ test('with storage: image saved to R2, asset row written, served by asset id', a
   assert.equal(await res.text(), 'jpegdata');
   server.close();
 });
+
+test('Gate B: card follows the image; revise does not lock; approve is final; B needs A', async () => {
+  const { h, replies, pushes, store } = setup({ fetchImpl: okFetch });
+  await h.command('U1', parseCommand('สร้าง love G2 x'), 'r0');
+  const a = parsePostback(replies.at(-1).template.actions[0].data);
+  await h.postback('U1', { jobId: a.jobId, gate: 'B', decision: 'approve', nonce: 'abcd1234' }, 'r1b');  // B before A
+  assert.match(replies.at(-1).text, /ต้องผ่าน Gate A/);
+  await h.postback('U1', a, 'r2');
+  await h.command('U1', parseCommand('ภาพ แมว'), 'r3');
+  const card = pushes.at(-1)[2];
+  assert.equal(parsePostback(card.template.actions[0].data).gate, 'B');
+  await h.postback('U1', parsePostback(card.template.actions[1].data), 'r4');                // revise
+  assert.match(replies.at(-1).text, /สร้างใหม่/);
+  await h.command('U1', parseCommand('ภาพ แมวใหม่'), 'r5');
+  const card2 = pushes.at(-1)[2];
+  await h.postback('U1', parsePostback(card2.template.actions[0].data), 'r6');               // approve
+  assert.match(replies.at(-1).text, /ผ่าน Gate B/);
+  assert.deepEqual((await store.approvedGates(a.jobId)).sort(), ['A', 'B']);
+  await h.command('U1', parseCommand('ภาพ แมวอีก'), 'r7');
+  assert.equal(pushes.at(-1).length, 2);                                                     // no new B card once decided
+});

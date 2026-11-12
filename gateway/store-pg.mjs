@@ -62,7 +62,7 @@ export function createPgStore(pool) {
     setJobState: (id, state) => pool.query(`update jobs set state = $2 where id = $1`, [id, state]),
 
     async hasApproval(jobId, gate) {
-      return Boolean(await one(`select 1 from approvals where job_id = $1 and gate = $2`, [jobId, gate]));
+      return Boolean(await one(`select 1 from approvals where job_id = $1 and gate = $2 and decision <> 'revise'`, [jobId, gate]));
     },
 
     addApproval: ({ jobId, gate, userId, decision }) =>

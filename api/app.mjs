@@ -71,9 +71,13 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         }
         name ??= images.put(out.result.images[0]);   // fallback: temporary in-memory copy
         const url = `${baseUrl}/img/${name}.jpg`;
+        const gateB = (await store.hasApproval(job.id, 'B'))
+          ? []
+          : [approvalCard(job.id, 'B', `Gate B ตรวจภาพ\n${job.topic}\nอนุมัติก่อนไปขั้นวิดีโอ (Veo)`)];
         return push(userId, [
           { type: 'image', originalContentUrl: url, previewImageUrl: url },
           text(`เสร็จแล้ว ค่าใช้จ่ายโดยประมาณ ฿${out.costThb.toFixed(2)}${out.warn ? ' (ใกล้เพดานงบ)' : ''}\nราคาจริงดูที่ OpenAI Usage`),
+          ...gateB,
         ]);
       }
       case 'pause': {
@@ -99,9 +103,15 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     const job = await store.getJob(pb.jobId);
     if (!job) return reply(replyToken, [text('ไม่พบงานนี้')]);
     if (await store.hasApproval(pb.jobId, pb.gate)) return reply(replyToken, [text(`Gate ${pb.gate} ตัดสินไปแล้ว`)]);
+    if (pb.gate === 'B' && !(await store.approvedGates(pb.jobId)).includes('A')) return reply(replyToken, [text('ต้องผ่าน Gate A ก่อน')]);
     await store.addApproval({ jobId: pb.jobId, gate: pb.gate, userId, decision: pb.decision });
     await store.setJobState(pb.jobId, pb.decision === 'approve' ? `gate_${pb.gate}_ok` : pb.decision);
-    return reply(replyToken, [text(`Gate ${pb.gate}: ${pb.decision}`)]);
+    const next = {
+      approve: pb.gate === 'B' ? 'ผ่าน Gate B แล้ว (ขั้นวิดีโอ Veo ยังไม่เปิดใช้งาน)' : `Gate ${pb.gate}: อนุมัติแล้ว`,
+      revise: pb.gate === 'B' ? 'รับทราบ ให้แก้: พิมพ์ ภาพ <คำบรรยายใหม่> เพื่อสร้างใหม่' : `Gate ${pb.gate}: ขอแก้ไข`,
+      reject: `Gate ${pb.gate}: ยกเลิกงานนี้`,
+    }[pb.decision];
+    return reply(replyToken, [text(next)]);
   }
 
   return { command, postback };

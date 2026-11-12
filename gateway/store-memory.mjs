@@ -12,7 +12,7 @@ export function createMemoryStore({ jobs = [], rates = [], approvals = [], kille
       return id;
     },
     async setJobState(id, s) { jobs.find((j) => j.id === id).state = s; },
-    async hasApproval(jobId, gate) { return state.approvals.some((a) => a.jobId === jobId && a.gate === gate); },
+    async hasApproval(jobId, gate) { return state.approvals.some((a) => a.jobId === jobId && a.gate === gate && a.decision !== 'revise'); },
     async addApproval(a) { state.approvals.push(a); },
     async setKill(scope, key) {
       const k = state.killed;
