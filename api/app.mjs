@@ -269,6 +269,9 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
       case 'custom': {
         if (!gateway || !push) return reply(replyToken, [text('ระบบสร้างงานยังไม่ได้ตั้งค่า')]);
         if (!(await store.channelExists(cmd.channel))) return reply(replyToken, [text(`ไม่พบช่อง "${cmd.channel}"`)]);
+        if (cmd.prompts && splitScenes(cmd.script, cmd.prompts.length).length !== cmd.prompts.length) {
+          return reply(replyToken, [text(`เรื่องของคุณมีบรรทัดน้อยกว่าจำนวนซีน (${cmd.prompts.length} ซีน) แต่ละซีนต้องมีอย่างน้อย 1 บรรทัด กรุณาแบ่งเรื่องเป็นบรรทัดเพิ่ม`)]);
+        }
         const jobId = await store.createJob({
           channelId: cmd.channel, grade: cmd.grade, topic: cmd.topic,
           capThb: GRADE_CAP_THB[cmd.grade], requiresExpert: EXPERT_CHANNELS.has(cmd.channel),
