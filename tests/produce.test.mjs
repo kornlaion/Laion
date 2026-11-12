@@ -250,3 +250,16 @@ test('Gate C: health channel script goes to experts; B alone does not start voic
 });
 
 test('ไอดี command parses', () => assert.deepEqual(parseCommand('ไอดี'), { cmd: 'whoami' }));
+
+test('Gate C without registered experts: owner is the expert, approving the plan at Gate A also records C', { skip: !hasFfmpeg }, async () => {
+  const b = build();
+  const h = createHandlers({ store: b.store, reply: async (t, m) => b.replies.push(m[0]), push: async (u, m) => b.pushes.push(m), gateway: b.gateway, images: createImageCache(), storage: b.storage, baseUrl: 'https://x.test', contactSheet, planProvider: 'anthropic', owners: ['U1'] });
+  await h.command('U1', parseCommand('ผลิต mindbody G1 การหายใจช้า ๆ'), 'm0');
+  assert.doesNotMatch(b.pushes.at(-1)[0].text, /ผู้เชี่ยวชาญ/);
+  const a = parsePostback(b.pushes.at(-1)[1].template.actions[0].data);
+  await h.postback('U1', a, 'm1');
+  assert.deepEqual((await b.store.approvedGates(b.store.jobs.at(-1).id)).sort(), ['A', 'C']);
+  const bb = parsePostback(b.pushes.at(-1)[2].template.actions[0].data);
+  await h.postback('U1', bb, 'm2');
+  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 4);                 // video runs with no waiting for anyone else
+});

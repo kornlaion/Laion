@@ -374,6 +374,10 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     if (pb.gate === 'B' && !ok.includes('A')) return reply(replyToken, [text('ต้องผ่าน Gate A ก่อน')]);
     if (pb.gate === 'D' && !(ok.includes('A') && ok.includes('B'))) return reply(replyToken, [text('ต้องผ่าน Gate A และ B ก่อน')]);
     await store.addApproval({ jobId: pb.jobId, gate: pb.gate, userId, decision: pb.decision });
+    // No separate experts registered: the owner is the expert. Approving the plan at Gate A (where the full script is shown) also records Gate C.
+    if (pb.gate === 'A' && pb.decision === 'approve' && job.requiresExpert && experts.size === 0) {
+      await store.addApproval({ jobId: pb.jobId, gate: 'C', userId, decision: 'approve' });
+    }
     await store.setJobState(pb.jobId, pb.decision === 'approve' ? `gate_${pb.gate}_ok` : pb.decision);
     if (pb.gate === 'C') {
       const label = { approve: 'อนุมัติ', revise: 'ขอให้แก้ไข', reject: 'ไม่อนุมัติ' }[pb.decision];
