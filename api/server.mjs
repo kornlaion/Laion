@@ -20,11 +20,16 @@ export function makeServer({ secret, allow, handlers }) {
     try { body = JSON.parse(raw.toString('utf8')); } catch { return; }
     for (const ev of body.events ?? []) {
       const userId = ev.source?.userId;
-      if (!isAllowed(userId, allow)) continue;       // silently ignore strangers
+      console.log('event', ev.type, 'from', userId ? `${userId.slice(0, 5)}…(${userId.length})` : 'unknown');
+      if (!isAllowed(userId, allow)) {                // ignore strangers, but say so in our own logs
+        console.log('ignored: user not in LINE_ALLOWED_USER_IDS');
+        continue;
+      }
       try {
         if (ev.type === 'message' && ev.message?.type === 'text') {
           const cmd = parseCommand(ev.message.text);
-          if (cmd) await handlers.command(userId, cmd, ev.replyToken);
+          if (cmd) { console.log('command', cmd.cmd); await handlers.command(userId, cmd, ev.replyToken); }
+          else console.log('ignored: text is not a known command');
         } else if (ev.type === 'postback') {
           const pb = parsePostback(ev.postback?.data);
           if (pb) await handlers.postback(userId, pb, ev.replyToken);
