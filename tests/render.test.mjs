@@ -37,3 +37,20 @@ test('real ffmpeg: image + audio + Thai subtitles -> 720x1280 mp4 (default size)
   assert.ok(seconds > 3 && seconds < 4);
   console.log('RENDER_OUT', `${tmp}/out.mp4`);
 });
+
+test('aligned cues follow the real speech timing; mismatching alignment falls back to the estimate', () => {
+  const text = 'สวัสดีครับ วันนี้อากาศดี\nขอบคุณที่ฟังนะ';
+  const chars = [...text].filter((c) => !/\s/.test(c));
+  // each non-space char takes 0.1 s, with a 0.5 s pause after the 10th char
+  const starts = chars.map((_, i) => i * 0.1 + (i >= 10 ? 0.5 : 0)), ends = starts.map((s) => s + 0.1);
+  const align = { characters: chars, starts, ends };
+  const cues = buildCues(text, 4, { maxChars: 12, linesPerCue: 1, align });
+  assert.ok(cues.length >= 2);
+  assert.ok(Math.abs(cues[0].start - 0) < 0.06);
+  const second = cues.find((c) => c.start > 1.0);
+  assert.ok(second && second.start >= 1.5 - 0.06);                          // starts after the pause, not at an even split
+  for (let i = 0; i < cues.length - 1; i++) assert.ok(cues[i].end <= cues[i + 1].start + 1e-9);
+  const est = buildCues(text, 4, { maxChars: 12, linesPerCue: 1, align: { characters: ['x'], starts: [0], ends: [1] } });
+  assert.equal(est[0].start, 0);                                            // bad alignment: estimated cues (start at 0, even weights)
+  assert.equal(est.length, cues.length);
+});

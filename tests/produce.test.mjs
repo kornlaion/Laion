@@ -63,7 +63,7 @@ function build() {
   const gateway = createGateway({ store, dailyCapThb: 1000, adapters: {
     anthropic: createScriptAdapter({ apiKey: 'ak', fetchImpl: claudeFetch }),
     openai: createOpenAIImageAdapter({ apiKey: 'k', fetchImpl: async (u, i) => { calls.push(JSON.parse(i.body)); return { ok: true, json: async () => ({ data: [{ b64_json: jpg.toString('base64') }] }) }; } }),
-    elevenlabs: createElevenLabsAdapter({ apiKey: 'k', voiceId: 'D', voices: { female: 'F', male: 'M' }, model: 'eleven_v4', fetchImpl: async (u) => { calls.push({ voiceUrl: u }); return { ok: true, headers: { get: () => null }, arrayBuffer: async () => mp3 }; } }),
+    elevenlabs: createElevenLabsAdapter({ apiKey: 'k', voiceId: 'D', voices: { female: 'F', male: 'M' }, model: 'eleven_v4', fetchImpl: async (u) => { calls.push({ voiceUrl: u }); if (u.includes('/with-timestamps')) return { ok: true, json: async () => ({ audio_base64: mp3.toString('base64'), alignment: { characters: ['x'], character_start_times_seconds: [0], character_end_times_seconds: [0.1] } }) }; return { ok: true, headers: { get: () => null }, arrayBuffer: async () => mp3 }; } }),
     render: createRenderAdapter({ storage }),
   } });
   const replies = [], pushes = [];
@@ -107,7 +107,7 @@ test('produce: script+plan before Gate A; A makes every scene + contact sheet; B
   assert.match(replies.at(-1).text, /กำลังทำวิดีโอ/);
   const urls = calls.filter((c) => c.voiceUrl);
   assert.equal(urls.length, 4);
-  assert.match(urls[0].voiceUrl, /speech\/F\?/);                                      // plan said female
+  assert.match(urls[0].voiceUrl, /speech\/F[/?]/);                                      // plan said female
   const vid = pushes.at(-1);
   assert.match(vid[0].text, /\/vid\/[0-9a-f-]{36}\.mp4/);
   assert.equal(store.state.ledger.length, 6 + 4 + 1);                                 // + 6 voices + render
@@ -305,10 +305,30 @@ test('เปลี่ยนเสียง: new voice regenerates the takes, swi
   await b.h.command('U1', { cmd: 'setvoice', voice: 'male' }, 'v3');
   await b.h.command('U1', { cmd: 'makevideo' }, 'v4');
   assert.equal(b.calls.filter((x) => x.voiceUrl).length, 8);                 // 4 new takes
-  assert.match(b.calls.filter((x) => x.voiceUrl).at(-1).voiceUrl, /speech\/M\?/);
+  assert.match(b.calls.filter((x) => x.voiceUrl).at(-1).voiceUrl, /speech\/M[/?]/);
   assert.equal(b.store.state.ledger.length, base + 5);                       // 4 voices + 1 render
   await b.h.command('U1', { cmd: 'setvoice', voice: 'female' }, 'v5');
   await b.h.command('U1', { cmd: 'makevideo' }, 'v6');
   assert.equal(b.calls.filter((x) => x.voiceUrl).length, 8);                 // nothing re-made
   assert.equal(b.store.state.ledger.length, base + 5);                       // same inputs as the first render: replay, free
+});
+
+test('ElevenLabs timestamps: alignment returned when asked; broken timestamps reply falls back to the plain endpoint', async () => {
+  const urls = [];
+  const ok = createElevenLabsAdapter({ apiKey: 'k', voiceId: 'V', timestamps: true, fetchImpl: async (u) => { urls.push(u); return { ok: true, json: async () => ({ audio_base64: Buffer.from('abc').toString('base64'), alignment: { characters: ['ก', 'ข'], character_start_times_seconds: [0, 0.2], character_end_times_seconds: [0.2, 0.4] } }) }; } });
+  const r = await ok.call({ text: 'กข', timestamps: true });
+  assert.equal(r.audio.toString(), 'abc');
+  assert.deepEqual(r.alignment, { characters: ['ก', 'ข'], starts: [0, 0.2], ends: [0.2, 0.4] });
+  assert.match(urls[0], /\/with-timestamps\?/);
+  const urls2 = [];
+  const bad = createElevenLabsAdapter({ apiKey: 'k', voiceId: 'V', timestamps: true, fetchImpl: async (u) => { urls2.push(u); return u.includes('/with-timestamps') ? { ok: false, status: 422 } : { ok: true, headers: { get: () => null }, arrayBuffer: async () => Buffer.from('plain') }; } });
+  const r2 = await bad.call({ text: 'กข', timestamps: true });
+  assert.equal(r2.audio.toString(), 'plain');
+  assert.equal(r2.alignment, null);
+  assert.equal(urls2.length, 2);
+  const plainUrls = [];
+  const plain = createElevenLabsAdapter({ apiKey: 'k', voiceId: 'V', timestamps: true, fetchImpl: async (u) => { plainUrls.push(u); return { ok: true, headers: { get: () => null }, arrayBuffer: async () => Buffer.from('p') }; } });
+  await plain.call({ text: 'กข' });                                 // not asked for timestamps (single voice command): plain endpoint only
+  assert.equal(plainUrls.length, 1);
+  assert.doesNotMatch(plainUrls[0], /with-timestamps/);
 });

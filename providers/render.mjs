@@ -2,6 +2,11 @@ import { renderVideo } from '../render/render.mjs';
 import { renderZen } from '../render/zen.mjs';
 // Internal "provider": the ffmpeg renderer, routed through the Gateway so it has gates, caps and a ledger.
 // Inputs are R2 keys (never raw bytes) so the audited params stay small.
+async function loadAlign(storage, key) {
+  if (!key) return undefined;
+  try { const b = await storage.get(key); return b ? JSON.parse(b.toString('utf8')) : undefined; } catch { return undefined; }   // missing or broken timing -> estimated subtitles
+}
+
 export function createRenderAdapter({ storage }) {
   return {
     unit: 'second',
@@ -13,7 +18,7 @@ export function createRenderAdapter({ storage }) {
     async call(p) {
       if (!storage) throw new Error('storage_not_configured');
       if (p.scenes) {
-        const loaded = await Promise.all(p.scenes.map(async (sc) => ({ image: await storage.get(sc.imageKey), audio: await storage.get(sc.audioKey), text: sc.text, clip: sc.clipKey ? await storage.get(sc.clipKey) : undefined })));
+        const loaded = await Promise.all(p.scenes.map(async (sc) => ({ image: await storage.get(sc.imageKey), audio: await storage.get(sc.audioKey), text: sc.text, clip: sc.clipKey ? await storage.get(sc.clipKey) : undefined, align: await loadAlign(storage, sc.alignKey) })));
         if (p.scenes.some((sc, i) => sc.clipKey && !loaded[i].clip)) throw new Error('clip_missing');
         if (loaded.some((x) => !x.image || !x.audio)) throw new Error('input_missing');
         const { video, seconds } = await renderZen({ scenes: loaded, title: process.env.SHOW_TITLE === '1' ? p.title : undefined });   // opening title is off by default (set SHOW_TITLE=1 to bring it back)

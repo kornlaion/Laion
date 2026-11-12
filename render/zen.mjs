@@ -55,7 +55,7 @@ export function zenAss({ scenes, audioSecs, A, title, W, H, subFont = 'Pridi Lig
     ev.push(`Dialogue: 1,${ts(0.3)},${ts(LEAD + 2.6)},Title,,0,0,0,,{\\fad(700,900)\\blur2}${t}`);
   }
   scenes.forEach((sc, i) => {
-    for (const c of buildCues(sc.text, audioSecs[i], { maxChars })) {
+    for (const c of buildCues(sc.text, audioSecs[i], { maxChars, align: sc.align })) {
       ev.push(`Dialogue: 0,${ts(A[i] + c.start)},${ts(A[i] + c.end)},Sub,,0,0,0,,{\\fad(280,280)\\blur1.5}${c.lines.map(esc).join('\\N')}`);
     }
   });
@@ -65,7 +65,7 @@ export function zenAss({ scenes, audioSecs, A, title, W, H, subFont = 'Pridi Lig
 const panY = (i, H, L) => (i % 2 === 0 ? `(ih-${H})*t/${L.toFixed(3)}` : `(ih-${H})*(1-t/${L.toFixed(3)})`);
 
 /**
- * scenes: [{ image: Buffer, audio: Buffer, text: string, clip?: Buffer }]  ->  { video: Buffer, seconds }
+ * scenes: [{ image: Buffer, audio: Buffer, text: string, clip?: Buffer, align?: {characters, starts, ends} }]  ->  { video: Buffer, seconds }
  * A scene with `clip` (e.g. a Veo video the owner made) uses the clip instead of the pan-and-zoom still; a clip shorter than the scene holds its last frame.
  * Size and threads are limited on purpose (see render.mjs): RENDER_WIDTH (default 720; 1080 when the plan has the memory).
  */

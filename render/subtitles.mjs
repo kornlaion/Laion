@@ -39,10 +39,34 @@ export function splitLines(text, maxChars = 16) {
 }
 
 /** Group lines into cues of up to linesPerCue lines; spread durationSec proportionally to text length. */
-export function buildCues(text, durationSec, { maxChars = 16, linesPerCue = 2 } = {}) {
+const nonSpace = (s) => [...String(s)].filter((c) => !/\s/.test(c));
+
+/** Per-character start/end times for the scene's non-space characters, or null when the alignment does not match the text exactly. */
+function charTimes(text, align) {
+  if (!align?.characters?.length) return null;
+  const want = nonSpace(text);
+  const idx = [];
+  align.characters.forEach((c, i) => { for (const ch of nonSpace(c)) idx.push([ch, i]); });
+  if (idx.length !== want.length || idx.some(([ch], i) => ch !== want[i])) return null;
+  return idx.map(([, i]) => ({ s: Number(align.starts[i]), e: Number(align.ends?.[i] ?? align.starts[i]) }));
+}
+
+export function buildCues(text, durationSec, { maxChars = 16, linesPerCue = 2, align } = {}) {
   const lines = splitLines(text, maxChars);
   const groups = [];
   for (let i = 0; i < lines.length; i += linesPerCue) groups.push(lines.slice(i, i + linesPerCue));
+  const times = charTimes(text, align);
+  if (times && groups.map((g) => nonSpace(g.join('')).length).reduce((a, b) => a + b, 0) === times.length) {
+    let at = 0;
+    const cues = groups.map((g) => {
+      const n = nonSpace(g.join('')).length;
+      const first = times[at], last = times[at + n - 1];
+      at += n;
+      return { start: Math.max(0, first.s - 0.05), end: Math.min(durationSec + 0.3, last.e + 0.15), lines: g };
+    });
+    for (let i = 0; i < cues.length - 1; i++) if (cues[i].end > cues[i + 1].start) cues[i].end = cues[i + 1].start;   // never overlap
+    return cues;
+  }
   const weights = groups.map((g) => g.reduce((s, l) => s + len(l), 0) || 1);
   const total = weights.reduce((a, b) => a + b, 0);
   let t = 0;

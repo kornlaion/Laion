@@ -214,19 +214,23 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
       const old = voices.get(i);
       if (old) { audioKeys.push(old.r2Key); continue; }
       const v = await gateway.run({ jobId: job.id, action: 'voice', provider: 'elevenlabs', actor: 'worker',
-        params: { text: scenes[i].text, voice: job.plan.voice, previous_text: scenes[i - 1]?.text, next_text: scenes[i + 1]?.text },
+        params: { text: scenes[i].text, voice: job.plan.voice, timestamps: true, previous_text: scenes[i - 1]?.text, next_text: scenes[i + 1]?.text },
         idempotencyKey: `auto-voice:${job.id}:${job.plan.voice}:${i}` });
       if (!v.ok) return push(userId, [text(`ขั้นเสียงซีน ${i + 1} ไม่สำเร็จ: ${reasonText(v)}\nพิมพ์ ทำวิดีโอ เพื่อลองใหม่`)]);
       if (v.replay) { const again = (await bySceneIndex(job.id, 'voice', (a) => a.r2Key.includes(voiceTag))).get(i); if (again) { audioKeys.push(again.r2Key); continue; } return push(userId, [text(`เสียงซีน ${i + 1} ถูกสร้างไปแล้วแต่หาไฟล์ไม่เจอ`)]); }
       const k = `jobs/${job.id}/scene-${i}${voiceTag}${v.taskId}.mp3`;
-      try { await storage.put(k, v.result.audio, 'audio/mpeg'); await store.addAsset({ jobId: job.id, r2Key: k, kind: 'voice' }); }
+      try {
+        await storage.put(k, v.result.audio, 'audio/mpeg');
+        if (v.result.alignment) await storage.put(k.replace(/\.mp3$/, '.align.json'), Buffer.from(JSON.stringify(v.result.alignment)), 'application/json');
+        await store.addAsset({ jobId: job.id, r2Key: k, kind: 'voice' });
+      }
       catch (err) { console.error('storage_error', err?.message ?? err); return push(userId, [text('บันทึกไฟล์เสียงไม่สำเร็จ (R2)')]); }
       audioKeys.push(k); voiceCost += v.costThb;
     }
     cost += voiceCost;
     const clips = await bySceneIndex(job.id, 'clip');
     const dropped = new Set(job.plan.noClip ?? []);
-    const sceneParams = scenes.map((sc, i) => ({ imageKey: imgs.get(i).r2Key, audioKey: audioKeys[i], text: sc.text, ...(clips.has(i) && !dropped.has(i) ? { clipKey: clips.get(i).r2Key } : {}) }));
+    const sceneParams = scenes.map((sc, i) => ({ imageKey: imgs.get(i).r2Key, audioKey: audioKeys[i], alignKey: audioKeys[i].replace(/\.mp3$/, '.align.json'), text: sc.text, ...(clips.has(i) && !dropped.has(i) ? { clipKey: clips.get(i).r2Key } : {}) }));
     const sig = hash(sceneParams.map((x) => x.imageKey + x.audioKey + (x.clipKey ?? '')).join('|'));
     const r = await gateway.run({ jobId: job.id, action: 'render', provider: 'render', actor: 'worker',
       params: { scenes: sceneParams, title: job.plan.title }, idempotencyKey: `auto-vid:${job.id}:${sig}` });
