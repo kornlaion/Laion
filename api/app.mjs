@@ -228,6 +228,16 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         const lines = Object.entries(s.byState).map(([k, v]) => `${k}: ${v}`);
         return reply(replyToken, [text([`งานทั้งหมด ${s.total}`, ...lines, `ใช้วันนี้ ฿${s.spentToday.toFixed(2)} / ฿${dailyCapThb}`].join('\n'))]);
       }
+      case 'jobs': {
+        const list = await store.recentJobs(5);
+        if (!list.length) return reply(replyToken, [text('ยังไม่มีงาน')]);
+        return reply(replyToken, [text(['งานล่าสุด', ...list.map((j, i) => `${i + 1}. ${j.channelId} ${j.grade} ${j.topic.slice(0, 30)} [${j.state}]`)].join('\n'))]);
+      }
+      case 'sendvideo': {
+        const job = await latestA();
+        const v = job && await store.latestAsset(job.id, 'video');
+        return reply(replyToken, [text(v ? `วิดีโอล่าสุด: ${baseUrl}/vid/${v.id}.mp4` : 'ยังไม่มีวิดีโอ')]);
+      }
       case 'budget': {
         const spent = await store.spentTodayThb();
         const pct = dailyCapThb ? Math.round((spent / dailyCapThb) * 100) : 0;

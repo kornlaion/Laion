@@ -43,6 +43,7 @@ export function createMemoryStore({ jobs = [], rates = [], approvals = [], kille
       const l = (state.assets ?? []).filter((a) => a.jobId === jobId && a.kind === kind); return l.at(-1) ?? null;
     },
     async getAsset(id) { return (state.assets ?? []).find((a) => a.id === id) ?? null; },
+    async recentJobs(n = 5) { return jobs.slice(-n).reverse().map((j) => ({ id: j.id, channelId: j.channelId, grade: j.grade, topic: j.topic, state: j.state })); },
     async getJob(id) { return jobs.find((j) => j.id === id) ?? null; },
     async getRate(provider, model, unit) {
       const r = rates.find((x) => x.provider === provider && x.model === model && x.unit === unit);

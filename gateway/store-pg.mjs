@@ -82,6 +82,10 @@ export function createPgStore(pool) {
 
     clearKill: (scope, key) => pool.query(`delete from kill_switch where scope = $1 and key = $2`, [scope, key]),
 
+    async recentJobs(n = 5) {
+      const { rows } = await pool.query(`select id, channel_id as "channelId", grade, topic, state from jobs order by created_at desc limit $1`, [n]);
+      return rows;
+    },
     async summary() {
       const { rows } = await pool.query(`select state, count(*)::int as n from jobs group by state`);
       const byState = Object.fromEntries(rows.map((r) => [r.state, r.n]));

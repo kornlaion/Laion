@@ -205,3 +205,14 @@ test('OpenAI planner: chat completions request shape, JSON mode, plan built, err
   const bad = createScriptAdapter({ vendor: 'openai', apiKey: 'k', fetchImpl: async () => ({ ok: false, status: 400, json: async () => ({ error: { message: 'model not found' } }) }) });
   await assert.rejects(bad.call({ channel: 'love', grade: 'G1', topic: 't', script: LINES.join('\n') }), /openai_text_400: model not found/);
 });
+
+test('งาน and ส่งวิดีโอ: list recent jobs, resend the latest video link', async () => {
+  const { h, replies } = build();
+  assert.deepEqual(parseCommand('งาน'), { cmd: 'jobs' });
+  await h.command('U1', { cmd: 'jobs' }, 'q0');
+  assert.match(replies.at(-1).text, /ยังไม่มีงาน/);
+  await h.command('U1', { cmd: 'create', channel: 'love', grade: 'G1', topic: 'ทดสอบ' }, 'q1');
+  await h.command('U1', { cmd: 'jobs' }, 'q2');
+  assert.match(replies.at(-1).text, /love G1 ทดสอบ/);
+  assert.deepEqual(parseCommand('ส่งวิดีโอ'), { cmd: 'sendvideo' });
+});
