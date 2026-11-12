@@ -15,7 +15,7 @@ export function createRenderAdapter({ storage }) {
       if (p.scenes) {
         const loaded = await Promise.all(p.scenes.map(async (sc) => ({ image: await storage.get(sc.imageKey), audio: await storage.get(sc.audioKey), text: sc.text })));
         if (loaded.some((x) => !x.image || !x.audio)) throw new Error('input_missing');
-        const { video, seconds } = await renderZen({ scenes: loaded, title: p.title });
+        const { video, seconds } = await renderZen({ scenes: loaded, title: process.env.SHOW_TITLE === '1' ? p.title : undefined })   // opening title is off by default (set SHOW_TITLE=1 to bring it back);
         return { video, seconds, externalId: null };
       }
       const [image, audio] = await Promise.all([storage.get(p.imageKey), storage.get(p.audioKey)]);
