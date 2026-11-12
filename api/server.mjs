@@ -62,6 +62,7 @@ export function makeServer({ secret, allow, handlers, images, assets }) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const { connect, createPgStore } = await import('../gateway/store-pg.mjs');
   const { createHandlers } = await import('./app.mjs');
+  const { contactSheet } = await import('../render/zen.mjs');
   const { createLineReply, createLinePush } = await import('./line-client.mjs');
   const { createImageCache } = await import('./images.mjs');
   const { createGateway } = await import('../gateway/gateway.mjs');
@@ -82,7 +83,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
   const baseUrl = process.env.PUBLIC_BASE_URL ?? (domain ? `https://${domain}` : '');
   if (!baseUrl) console.error('PUBLIC_BASE_URL / RAILWAY_PUBLIC_DOMAIN not set: image replies will fail');
-  const handlers = createHandlers({ store, reply: createLineReply(), push: createLinePush(), gateway, images, storage, baseUrl });
+  const handlers = createHandlers({ store, reply: createLineReply(), push: createLinePush(), gateway, images, storage, baseUrl, contactSheet });
   const port = Number(process.env.PORT ?? 8787);
   makeServer({ secret, allow, handlers, images, assets }).listen(port, () => console.log(`listening on ${port}`));
 }

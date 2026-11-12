@@ -35,6 +35,9 @@ export function parseCommand(text) {
   if (m) return { cmd: 'video', voice: m[1] === 'ชาย' ? 'male' : m[1] === 'หญิง' ? 'female' : undefined, text: m[2] };
   m = t.match(/^ผลิต (\S+) (G[0-4]) (.{2,200})$/);
   if (m) return { cmd: 'produce', channel: m[1], grade: m[2], topic: m[3] };
+  m = t.match(/^ซีน (\d{1,2})(?: (.{3,600}))?$/);
+  if (m) return { cmd: 'scene', n: Number(m[1]), prompt: m[2] };
+  if (t === 'ทำวิดีโอ') return { cmd: 'makevideo' };
   m = t.match(/^พัก (\S+)$/);
   if (m) return { cmd: 'pause', target: m[1] };
   m = t.match(/^เริ่ม (\S+)$/);

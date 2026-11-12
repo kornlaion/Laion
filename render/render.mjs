@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { buildCues, toAss } from './subtitles.mjs';
 
-const run = (cmd, args) => new Promise((resolve, reject) => {
+export const run = (cmd, args) => new Promise((resolve, reject) => {
   const p = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '', err = '';
   p.stdout.on('data', (d) => { out += d; });
@@ -23,7 +23,7 @@ export async function audioSeconds(file) {
 
 // One render at a time: ffmpeg is the heaviest thing this server does.
 let tail = Promise.resolve();
-const serial = (fn) => { const r = tail.then(fn, fn); tail = r.catch(() => {}); return r; };
+export const serial = (fn) => { const r = tail.then(fn, fn); tail = r.catch(() => {}); return r; };
 
 /**
  * Still image + voice-over + Thai subtitles -> vertical 1080x1920 MP4 (H.264/AAC).

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { GRADE_CAP_THB } from '../gateway/policy.mjs';
+import { STYLE_ZEN } from '../providers/anthropic-script.mjs';
 
 // Lane D channels (health / wellbeing) need expert Gate C before video, voice and publish.
 const EXPERT_CHANNELS = new Set(['mindbody', 'healthtech']);
@@ -27,7 +28,7 @@ const REASONS = {
   provider_error: 'ผู้ให้บริการตอบผิดพลาด',
 };
 
-export function createHandlers({ store, reply, push, gateway, images, storage, baseUrl, dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
+export function createHandlers({ store, reply, push, gateway, images, storage, baseUrl, contactSheet, dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
   const reasonText = (out) => `${REASONS[out.reason] ?? (out.reason.startsWith('gate_missing') ? 'ยังไม่ผ่านด่านอนุมัติที่จำเป็น' : out.reason)}${out.reason === 'provider_error' && out.message ? ` (${out.message})` : ''}`;
 
   /** Saves to R2 (permanent) when configured, else the temporary in-memory cache. Returns the id used in the URL. */
@@ -44,7 +45,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
 
   const NO_JOB = 'ยังไม่มีงานที่ผ่าน Gate A ให้พิมพ์ ผลิต <ช่อง> <เกรด> <หัวข้อ> แล้วกดอนุมัติก่อน';
   const latestA = () => store.latestApprovedJob('A');
-  const QUALITY = { G0: 'low', G1: 'low', G2: 'medium', G3: 'high', G4: 'high' };
+  const QUALITY = { G0: 'low', G1: 'medium', G2: 'medium', G3: 'high', G4: 'high' };
   const done = (out) => (out.replay ? text('คำสั่งนี้ถูกทำไปแล้ว ไม่คิดเงินซ้ำ') : null);
 
   async function doImage(userId, job, { prompt, quality, key }) {
@@ -98,6 +99,125 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
       text(`วิดีโอเสร็จแล้ว (${r.result.seconds.toFixed(1)} วินาที) ดูที่นี่: ${baseUrl}/vid/${vidId}.mp4\nค่าใช้จ่ายโดยประมาณ ฿${total.toFixed(2)} (เสียง ฿${v.costThb.toFixed(2)} + เรนเดอร์ ฿${r.costThb.toFixed(2)})`),
       approvalCard(job.id, 'D', `Gate D ตรวจวิดีโอสุดท้าย\n${job.topic}\nอนุมัติก่อนโพสต์`),
     ]);
+  }
+
+
+  // ---------- multi-scene (ZEN) flow ----------
+  const sceneIdx = (a) => Number(/scene-(\d+)-/.exec(a.r2Key)?.[1] ?? -1);
+  /** Latest asset per scene index (later rows replace earlier ones, so a regenerated scene wins). */
+  async function bySceneIndex(jobId, kind) {
+    const m = new Map();
+    for (const a of await store.listAssets(jobId, kind)) { const i = sceneIdx(a); if (i >= 0) m.set(i, a); }
+    return m;
+  }
+  const hash = (x) => crypto.createHash('sha1').update(x).digest('hex').slice(0, 10);
+
+  async function doSceneImage(job, i, prompt, quality, key) {
+    const out = await gateway.run({ jobId: job.id, action: 'image', provider: 'openai', params: { prompt, quality }, idempotencyKey: key, actor: 'worker' });
+    if (!out.ok || out.replay) return { out };
+    const r2Key = `jobs/${job.id}/scene-${i}-${out.taskId}.jpg`;
+    await storage.put(r2Key, out.result.images[0], 'image/jpeg');
+    await store.addAsset({ jobId: job.id, r2Key, kind: 'image' });
+    return { out, buf: out.result.images[0] };
+  }
+
+  async function sendSheet(userId, job, header, cost) {
+    const scenes = job.plan.scenes;
+    const have = await bySceneIndex(job.id, 'image');
+    const bufs = [];
+    for (let i = 0; i < scenes.length; i++) { const a = have.get(i); if (a) bufs.push(await storage.get(a.r2Key)); }
+    if (!bufs.length) return push(userId, [text(header)]);
+    const sheet = await contactSheet(bufs);
+    const key = `jobs/${job.id}/sheet-${crypto.randomBytes(4).toString('hex')}.jpg`;
+    await storage.put(key, sheet, 'image/jpeg');
+    const id = await store.addAsset({ jobId: job.id, r2Key: key, kind: 'sheet' });
+    const url = `${baseUrl}/img/${id}.jpg`;
+    const gateB = (await store.hasApproval(job.id, 'B')) ? [] : [approvalCard(job.id, 'B', `Gate B ตรวจภาพ ${scenes.length} ซีน\n${job.plan.title}\nอนุมัติแล้วระบบทำวิดีโอต่อ`)];
+    return push(userId, [{ type: 'image', originalContentUrl: url, previewImageUrl: url }, text(`${header}\nค่าใช้จ่ายภาพโดยประมาณ ฿${cost.toFixed(2)}\nอยากเปลี่ยนซีนไหน พิมพ์ ซีน <เลข> [คำบรรยายภาพใหม่]`), ...gateB]);
+  }
+
+  async function doScenes(userId, job, indices, { force = false, keyBase }) {
+    const scenes = job.plan.scenes;
+    const have = await bySceneIndex(job.id, 'image');
+    const todo = indices.filter((i) => force || !have.has(i));
+    const quality = QUALITY[job.grade] ?? 'low';
+    let cost = 0; const failed = []; let replays = 0;
+    let next = 0;
+    const worker = async () => {
+      while (next < todo.length) {
+        const i = todo[next++];
+        try {
+          const prompt = job.plan.overrides?.[i] ?? scenes[i].image_prompt;
+          const { out } = await doSceneImage(job, i, prompt, quality, `${keyBase}:${i}`);
+          if (!out.ok) failed.push(`ซีน ${i + 1}: ${reasonText(out)}`);
+          else if (out.replay) replays++;
+          else cost += out.costThb;
+        } catch (err) { console.error('scene_error', err?.message ?? err); failed.push(`ซีน ${i + 1}: บันทึกไฟล์ไม่สำเร็จ`); }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, todo.length) }, worker));
+    const notes = [];
+    if (replays) notes.push(`${replays} ซีนถูกทำไปแล้ว ไม่คิดเงินซ้ำ`);
+    if (failed.length) notes.push(`ไม่สำเร็จ:\n${failed.join('\n')}\nพิมพ์ ซีน <เลข> เพื่อลองใหม่`);
+    return sendSheet(userId, job, [`ภาพตามแผน ${scenes.length} ซีน`, ...notes].join('\n'), cost);
+  }
+
+  async function doSceneVideo(userId, job) {
+    const scenes = job.plan.scenes;
+    const imgs = await bySceneIndex(job.id, 'image');
+    if (scenes.some((_, i) => !imgs.has(i))) return push(userId, [text('ยังมีซีนที่ไม่มีภาพ พิมพ์ ซีน <เลข> เพื่อสร้างก่อน')]);
+    const voices = await bySceneIndex(job.id, 'voice');
+    let cost = 0; let voiceCost = 0;
+    const audioKeys = [];
+    for (let i = 0; i < scenes.length; i++) {
+      const old = voices.get(i);
+      if (old) { audioKeys.push(old.r2Key); continue; }
+      const v = await gateway.run({ jobId: job.id, action: 'voice', provider: 'elevenlabs', actor: 'worker',
+        params: { text: scenes[i].text, voice: job.plan.voice, previous_text: scenes[i - 1]?.text, next_text: scenes[i + 1]?.text },
+        idempotencyKey: `auto-voice:${job.id}:${i}` });
+      if (!v.ok) return push(userId, [text(`ขั้นเสียงซีน ${i + 1} ไม่สำเร็จ: ${reasonText(v)}\nพิมพ์ ทำวิดีโอ เพื่อลองใหม่`)]);
+      if (v.replay) { const again = (await bySceneIndex(job.id, 'voice')).get(i); if (again) { audioKeys.push(again.r2Key); continue; } return push(userId, [text(`เสียงซีน ${i + 1} ถูกสร้างไปแล้วแต่หาไฟล์ไม่เจอ`)]); }
+      const k = `jobs/${job.id}/scene-${i}-${v.taskId}.mp3`;
+      try { await storage.put(k, v.result.audio, 'audio/mpeg'); await store.addAsset({ jobId: job.id, r2Key: k, kind: 'voice' }); }
+      catch (err) { console.error('storage_error', err?.message ?? err); return push(userId, [text('บันทึกไฟล์เสียงไม่สำเร็จ (R2)')]); }
+      audioKeys.push(k); voiceCost += v.costThb;
+    }
+    cost += voiceCost;
+    const sceneParams = scenes.map((sc, i) => ({ imageKey: imgs.get(i).r2Key, audioKey: audioKeys[i], text: sc.text }));
+    const sig = hash(sceneParams.map((x) => x.imageKey + x.audioKey).join('|'));
+    const r = await gateway.run({ jobId: job.id, action: 'render', provider: 'render', actor: 'worker',
+      params: { scenes: sceneParams, title: job.plan.title }, idempotencyKey: `auto-vid:${job.id}:${sig}` });
+    if (!r.ok) return push(userId, [text(`ขั้นเรนเดอร์ไม่สำเร็จ: ${reasonText(r)}\nพิมพ์ ทำวิดีโอ เพื่อลองใหม่ (เสียงที่ทำแล้วไม่คิดเงินซ้ำ)`)]);
+    if (r.replay) {
+      const last = await store.latestAsset(job.id, 'video');
+      return push(userId, [text(last ? `วิดีโอนี้ทำไปแล้ว ไม่คิดเงินซ้ำ: ${baseUrl}/vid/${last.id}.mp4` : 'คำสั่งนี้ถูกทำไปแล้ว ไม่คิดเงินซ้ำ')]);
+    }
+    const videoKey = `jobs/${job.id}/${r.taskId}.mp4`;
+    let vidId;
+    try { await storage.put(videoKey, r.result.video, 'video/mp4'); vidId = await store.addAsset({ jobId: job.id, r2Key: videoKey, kind: 'video' }); }
+    catch (err) { console.error('storage_error', err?.message ?? err); return push(userId, [text('บันทึกวิดีโอไม่สำเร็จ (R2)')]); }
+    cost += r.costThb;
+    return push(userId, [
+      text(`วิดีโอเสร็จแล้ว (${r.result.seconds.toFixed(1)} วินาที, ${scenes.length} ซีน) ดูที่นี่: ${baseUrl}/vid/${vidId}.mp4\nค่าใช้จ่ายโดยประมาณ ฿${cost.toFixed(2)} (เสียง ฿${voiceCost.toFixed(2)} + เรนเดอร์ ฿${r.costThb.toFixed(2)})`),
+      approvalCard(job.id, 'D', `Gate D ตรวจวิดีโอสุดท้าย\n${job.plan.title}\nอนุมัติก่อนโพสต์`),
+    ]);
+  }
+
+  const planText = (plan, cost) => {
+    const rows = plan.scenes.map((sc, i) => `${i + 1}. ${[...sc.text.replace(/\n/g, ' ')].slice(0, 28).join('')}…\n   ภาพ: ${[...(sc.visual ?? '')].slice(0, 70).join('')}`).join('\n');
+    return `แผนงาน: ${plan.title}\n${plan.scenes.length} ซีน, ${[...plan.script].length} ตัวอักษร, เสียง${plan.voice === 'male' ? 'ชาย' : 'หญิง'}, โทน ZEN\n\n${rows}\n\nค่าเขียนสคริปต์ประมาณ ฿${cost.toFixed(2)}`;
+  };
+
+  async function sceneCommand(userId, cmd, replyToken) {
+    if (!gateway || !push || !storage || !contactSheet) return reply(replyToken, [text('ต้องตั้งค่า R2 ก่อน')]);
+    const job = await latestA();
+    if (!job?.plan?.scenes) return reply(replyToken, [text(NO_JOB)]);
+    const i = cmd.n - 1;
+    if (i < 0 || i >= job.plan.scenes.length) return reply(replyToken, [text(`งานนี้มี ${job.plan.scenes.length} ซีน (พิมพ์ ซีน 1 ถึง ${job.plan.scenes.length})`)]);
+    if (cmd.prompt) job.plan.overrides = { ...(job.plan.overrides ?? {}), [i]: `${cmd.prompt}. ${STYLE_ZEN}` };
+    if (cmd.prompt) await store.setPlan(job.id, job.plan);
+    await reply(replyToken, [text(`กำลังสร้างซีน ${cmd.n} ใหม่ รอสักครู่`)]);
+    return doScenes(userId, job, [i], { force: true, keyBase: `regen:${replyToken}` });
   }
 
   async function command(userId, cmd, replyToken) {
@@ -159,10 +279,24 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         if (out.replay) return push(userId, [text('คำสั่งนี้ถูกทำไปแล้ว ไม่คิดเงินซ้ำ')]);
         const plan = out.result.plan;
         await store.setPlan(jobId, plan);
+        if (plan.scenes) return push(userId, [
+          text(planText(plan, out.costThb)),
+          approvalCard(jobId, 'A', `Gate A แผนงาน\n${cmd.channel} ${cmd.grade}\n${plan.title}\nอนุมัติแล้วระบบสร้างภาพ ${plan.scenes.length} ซีนต่อทันที`),
+        ]);
         return push(userId, [
           text(`แผนงาน: ${plan.title}\n\nสคริปต์ (${[...plan.script].length} ตัวอักษร, เสียง${plan.voice === 'male' ? 'ชาย' : 'หญิง'}):\n${plan.script}\n\nพรอมต์ภาพ:\n${plan.image_prompt}\n\nค่าเขียนสคริปต์ประมาณ ฿${out.costThb.toFixed(2)}`),
           approvalCard(jobId, 'A', `Gate A แผนงาน\n${cmd.channel} ${cmd.grade}\n${plan.title}\nอนุมัติแล้วระบบสร้างภาพต่อทันที`),
         ]);
+      }
+      case 'scene':
+        return sceneCommand(userId, cmd, replyToken);
+      case 'makevideo': {
+        if (!gateway || !push || !storage) return reply(replyToken, [text('การทำวิดีโอต้องตั้งค่า R2 ก่อน')]);
+        const job = await latestA();
+        if (!job?.plan?.scenes) return reply(replyToken, [text(NO_JOB)]);
+        if (!(await store.approvedGates(job.id)).includes('B')) return reply(replyToken, [text('ต้องผ่าน Gate B (อนุมัติภาพ) ก่อนทำวิดีโอ')]);
+        await reply(replyToken, [text('กำลังทำวิดีโอ (เสียง + จัดจังหวะ + ซับไทย) ใช้เวลาประมาณ 2-3 นาที')]);
+        return doSceneVideo(userId, job);
       }
       case 'pause': {
         if (cmd.target === 'all') await store.setKill('system', '*');
@@ -195,11 +329,21 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     const next = {
       approve: pb.gate === 'B' ? 'ผ่าน Gate B แล้ว ทำวิดีโอต่อได้: วิดีโอ <ข้อความพากย์>'
         : pb.gate === 'D' ? 'ผ่าน Gate D แล้ว (การโพสต์อัตโนมัติยังไม่เปิดใช้งาน ดาวน์โหลดไฟล์ไปโพสต์เองได้)' : `Gate ${pb.gate}: อนุมัติแล้ว`,
-      revise: pb.gate === 'B' ? 'รับทราบ ให้แก้: พิมพ์ ภาพ <คำบรรยายใหม่> เพื่อสร้างใหม่'
+      revise: pb.gate === 'B' ? (job.plan?.scenes ? 'รับทราบ ให้แก้: พิมพ์ ซีน <เลข> [คำบรรยายภาพใหม่] เพื่อสร้างซีนนั้นใหม่' : 'รับทราบ ให้แก้: พิมพ์ ภาพ <คำบรรยายใหม่> เพื่อสร้างใหม่')
         : pb.gate === 'D' ? 'รับทราบ ให้แก้: พิมพ์ วิดีโอ <ข้อความพากย์ใหม่> เพื่อทำใหม่' : `Gate ${pb.gate}: ขอแก้ไข`,
       reject: `Gate ${pb.gate}: ยกเลิกงานนี้`,
     }[pb.decision];
-    if (pb.decision === 'approve' && job.plan && gateway && push) {
+    if (pb.decision === 'approve' && job.plan?.scenes && gateway && push && storage && contactSheet) {
+      if (pb.gate === 'A') {
+        await reply(replyToken, [text(`อนุมัติแผนแล้ว กำลังสร้างภาพ ${job.plan.scenes.length} ซีน รอสักครู่`)]);
+        return doScenes(userId, job, job.plan.scenes.map((_, i) => i), { keyBase: `auto-img:${job.id}` });
+      }
+      if (pb.gate === 'B') {
+        await reply(replyToken, [text('ผ่าน Gate B แล้ว กำลังทำวิดีโอ (เสียง + จัดจังหวะ + ซับไทย) ใช้เวลาประมาณ 2-3 นาที')]);
+        return doSceneVideo(userId, job);
+      }
+    }
+    if (pb.decision === 'approve' && job.plan && !job.plan.scenes && gateway && push) {
       if (pb.gate === 'A') {
         await reply(replyToken, [text('อนุมัติแผนแล้ว กำลังสร้างภาพตามแผน รอสักครู่')]);
         return doImage(userId, job, { prompt: job.plan.image_prompt, quality: QUALITY[job.grade] ?? 'low', key: `auto-img:${job.id}` });

@@ -20,7 +20,12 @@ export function createElevenLabsAdapter({
       const res = await fetchImpl(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'xi-api-key': apiKey },
-        body: JSON.stringify({ text: p.text, model_id: model, ...(languageCode ? { language_code: languageCode } : {}) }),
+        body: JSON.stringify({
+          text: p.text, model_id: model,
+          ...(languageCode ? { language_code: languageCode } : {}),
+          ...(p.previous_text ? { previous_text: p.previous_text } : {}),   // neighbouring scenes keep the delivery consistent
+          ...(p.next_text ? { next_text: p.next_text } : {}),
+        }),
       });
       if (!res.ok) throw new Error(`elevenlabs_${res.status}`);   // body not logged
       const audio = Buffer.from(await res.arrayBuffer());

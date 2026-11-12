@@ -5,11 +5,13 @@ import fs from 'node:fs';
 import { splitLines, buildCues, toAss } from '../render/subtitles.mjs';
 import { renderVideo } from '../render/render.mjs';
 
-test('Thai lines break between words and respect the limit', () => {
-  const lines = splitLines('สวัสดีครับยินดีต้อนรับสู่ช่องลายออนวันนี้เรามีเรื่องราวดีๆมาฝาก', 14);
-  assert.ok(lines.length >= 3);
-  for (const l of lines) assert.ok([...l].length <= 16, l);
-  assert.equal(lines.join(''), 'สวัสดีครับยินดีต้อนรับสู่ช่องลายออนวันนี้เรามีเรื่องราวดีๆมาฝาก');
+test('Thai lines break at the author phrase spaces first, then at balanced word boundaries', () => {
+  const lines = splitLines('คนเรานะ… ไม่ว่าจะเจออะไรในชีวิต ก็อย่าลืมเป็นคนดี', 16);
+  assert.deepEqual(lines, ['คนเรานะ…', 'ไม่ว่าจะเจอ', 'อะไรในชีวิต', 'ก็อย่าลืมเป็นคนดี']);
+  const flat = splitLines('สวัสดีครับยินดีต้อนรับสู่ช่องลายออนวันนี้เรามีเรื่องราวดีๆมาฝาก', 14);
+  assert.ok(flat.length >= 3);
+  for (const l of flat) assert.ok([...l].length <= 17, l);
+  assert.equal(flat.join(''), 'สวัสดีครับยินดีต้อนรับสู่ช่องลายออนวันนี้เรามีเรื่องราวดีๆมาฝาก');   // words never lost
 });
 
 test('cues cover the whole duration in order; ASS has one event per cue', () => {

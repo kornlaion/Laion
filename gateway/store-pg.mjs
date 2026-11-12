@@ -12,7 +12,7 @@ export function createPgStore(pool) {
     setPlan: (id, plan) => pool.query(`update jobs set plan = $2::jsonb where id = $1`, [id, JSON.stringify(plan)]),
 
     latestApprovedJob: (gate) => one(
-      `select j.id, j.channel_id as "channelId", j.grade, j.topic, j.requires_expert as "requiresExpert", j.cap_thb as "capThb"
+      `select j.id, j.channel_id as "channelId", j.grade, j.topic, j.plan, j.requires_expert as "requiresExpert", j.cap_thb as "capThb"
          from jobs j join approvals a on a.job_id = j.id
         where a.gate = $1 and a.decision = 'approve'
         order by j.created_at desc limit 1`, [gate]),
@@ -20,6 +20,11 @@ export function createPgStore(pool) {
     async addAsset({ jobId, r2Key, kind }) {
       const r = await one(`insert into assets (job_id, r2_key, kind) values ($1, $2, $3) returning id`, [jobId, r2Key, kind]);
       return r.id;
+    },
+    async listAssets(jobId, kind) {
+      const { rows } = await pool.query(
+        `select id, job_id as "jobId", r2_key as "r2Key", kind from assets where job_id = $1 and kind = $2 order by created_at asc`, [jobId, kind]);
+      return rows;
     },
     latestAsset: (jobId, kind) => one(
       `select id, job_id as "jobId", r2_key as "r2Key", kind from assets where job_id = $1 and kind = $2 order by created_at desc limit 1`, [jobId, kind]),

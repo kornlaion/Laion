@@ -9,20 +9,30 @@ import { createMemoryStore } from '../gateway/store-memory.mjs';
 import { createOpenAIImageAdapter } from '../providers/openai-image.mjs';
 import { createElevenLabsAdapter } from '../providers/elevenlabs.mjs';
 import { createRenderAdapter } from '../providers/render.mjs';
-import { createScriptAdapter, parsePlan } from '../providers/anthropic-script.mjs';
+import { createScriptAdapter, parseWrite, parseVisual } from '../providers/anthropic-script.mjs';
 import { parseCommand, parsePostback } from '../api/line.mjs';
+import { contactSheet } from '../render/zen.mjs';
 
-const PLAN = { title: 'รักแรกพบ', script: 'วันหนึ่งฉันเจอเธอที่ริมทะเล แสงอาทิตย์ตกกระทบผิวน้ำ และหัวใจก็เต้นแรงขึ้นมาทันที', image_prompt: 'A couple silhouette on a quiet beach at sunset, warm light, vertical', voice: 'female' };
+const LINES = ['วันหนึ่งฉันเจอเธอที่ริมทะเล', 'แสงอาทิตย์ตกกระทบผิวน้ำ', 'ลมพัดเบา ๆ เหมือนกำลังทักทาย', 'หัวใจก็เต้นแรงขึ้นมาทันที', 'เราเดินเคียงกันโดยไม่พูดอะไร', 'แต่รู้ว่าวันนี้จะอยู่ในใจไปอีกนาน'];
+const WRITE = { title: 'รักแรกพบ', script: LINES.join('\n'), voice: 'female' };
 const claudeFetch = async (url, init) => {
-  claudeFetch.last = { url, headers: init.headers, body: JSON.parse(init.body) };
-  return { ok: true, json: async () => ({ id: 'msg_1', content: [{ type: 'text', text: '```json\n' + JSON.stringify(PLAN) + '\n```' }] }) };
+  const body = JSON.parse(init.body);
+  claudeFetch.last = { url, headers: init.headers, body };
+  claudeFetch.calls = (claudeFetch.calls ?? 0) + 1;
+  const n = Number(/Number of scenes: (\d+)/.exec(body.messages[0].content)?.[1]);
+  const out = /art director/.test(body.system)
+    ? { title: 'รักแรกพบ', voice: 'female', image_prompts: Array.from({ length: n }, (_, i) => `Quiet sea detail number ${i + 1}, soft light`) }
+    : WRITE;
+  return { ok: true, json: async () => ({ id: 'msg_1', content: [{ type: 'text', text: '```json\n' + JSON.stringify(out) + '\n```' }] }) };
 };
 
-test('parsePlan: tolerates code fences, rejects incomplete or too long scripts', () => {
-  assert.equal(parsePlan('```json\n' + JSON.stringify(PLAN) + '\n```').title, 'รักแรกพบ');
-  assert.throws(() => parsePlan('no json here'), /script_parse/);
-  assert.throws(() => parsePlan(JSON.stringify({ script: 'x' })), /script_incomplete/);
-  assert.throws(() => parsePlan(JSON.stringify({ ...PLAN, script: 'ก'.repeat(401) })), /script_too_long/);
+test('parseWrite / parseVisual: tolerate code fences, reject incomplete output', () => {
+  assert.equal(parseWrite('```json\n' + JSON.stringify(WRITE) + '\n```').title, 'รักแรกพบ');
+  assert.throws(() => parseWrite('no json here'), /script_parse/);
+  assert.throws(() => parseWrite(JSON.stringify({ title: 'x' })), /script_incomplete/);
+  assert.throws(() => parseWrite(JSON.stringify({ ...WRITE, script: 'ก'.repeat(1001) })), /script_too_long/);
+  assert.deepEqual(parseVisual(JSON.stringify({ image_prompts: ['a', 'b'] }), 2).prompts, ['a', 'b']);
+  assert.throws(() => parseVisual(JSON.stringify({ image_prompts: ['a'] }), 2), /visual_count_mismatch/);
 });
 
 test('parseCommand: produce', () => {
@@ -43,6 +53,7 @@ function build() {
   const storage = { put: async (k, b) => files.set(k, b), get: async (k) => files.get(k) ?? null };
   const rates = [
     { provider: 'anthropic', model: 'claude-sonnet-5-5', unit: 'call', priceUsd: 0.02 },
+    { provider: 'openai', model: 'gpt-image-2:medium', unit: 'image', priceUsd: 0.08 },
     { provider: 'openai', model: 'gpt-image-2:low', unit: 'image', priceUsd: 0.009 },
     { provider: 'elevenlabs', model: 'eleven_v4', unit: '1k_chars', priceUsd: 0.08 },
     { provider: 'render', model: 'ffmpeg', unit: 'second', priceUsd: 0.0005 },
@@ -56,38 +67,50 @@ function build() {
     render: createRenderAdapter({ storage }),
   } });
   const replies = [], pushes = [];
-  const h = createHandlers({ store, reply: async (t, m) => replies.push(m[0]), push: async (u, m) => pushes.push(m), gateway, images: createImageCache(), storage, baseUrl: 'https://x.test' });
+  const h = createHandlers({ store, reply: async (t, m) => replies.push(m[0]), push: async (u, m) => pushes.push(m), gateway, images: createImageCache(), storage, baseUrl: 'https://x.test', contactSheet });
   return { store, h, replies, pushes, calls, files };
 }
 
-test('produce: script before Gate A; A approves plan and image is made; B approves and video is made; D closes', { skip: !hasFfmpeg }, async () => {
+test('produce: script+plan before Gate A; A makes every scene + contact sheet; B makes voices+video; D closes', { skip: !hasFfmpeg }, async () => {
   const { store, h, replies, pushes, calls } = build();
   await h.command('U1', parseCommand('ผลิต love G1 รักแรกพบริมทะเล'), 'r0');
   assert.equal(claudeFetch.last.headers['x-api-key'], 'ak');
   assert.equal(claudeFetch.last.body.model, 'claude-sonnet-5-5');
   assert.match(claudeFetch.last.body.messages[0].content, /Channel: love/);
   const planMsg = pushes.at(-1);
-  assert.match(planMsg[0].text, /สคริปต์/);
-  assert.equal(store.state.ledger.length, 1);                                         // script cost recorded, no image yet
+  assert.match(planMsg[0].text, /4 ซีน/);
+  assert.equal(store.state.ledger.length, 1);                                         // one script action (2 Claude calls), no image yet
   assert.equal(calls.length, 0);
   const a = parsePostback(planMsg[1].template.actions[0].data);
   assert.equal(a.gate, 'A');
 
-  await h.postback('U1', a, 'r1');                                                    // approve plan -> image automatically
-  assert.match(replies.at(-1).text, /กำลังสร้างภาพ/);
-  assert.match(calls[0].prompt, /silhouette on a quiet beach/);
-  assert.equal(calls[0].quality, 'low');                                              // G1 -> low
-  const imgPush = pushes.at(-1);
-  assert.equal(imgPush[0].type, 'image');
-  const b = parsePostback(imgPush[2].template.actions[0].data);
+  await h.postback('U1', a, 'r1');                                                    // approve plan -> all scene images automatically
+  assert.match(replies.at(-1).text, /กำลังสร้างภาพ 4 ซีน/);
+  assert.equal(calls.length, 4);
+  assert.match(calls[0].prompt, /Quiet sea detail number \d.*Japanese zen minimalism/);
+  assert.equal(calls[0].quality, 'medium');                                           // G1 -> medium
+  const sheetPush = pushes.at(-1);
+  assert.equal(sheetPush[0].type, 'image');
+  assert.match(sheetPush[0].originalContentUrl, /\/img\/[0-9a-f-]{36}\.jpg$/);
+  const b = parsePostback(sheetPush[2].template.actions[0].data);
   assert.equal(b.gate, 'B');
+  assert.equal(store.state.ledger.length, 5);
 
-  await h.postback('U1', b, 'r2');                                                    // approve image -> video automatically
+  await h.command('U1', { cmd: 'scene', n: 2, prompt: 'A single stone in still water' }, 'r1b');   // redo one scene
+  assert.equal(calls.length, 5);
+  assert.match(calls.at(-1).prompt, /^A single stone in still water\. Japanese zen/);
+  assert.equal(store.state.ledger.length, 6);
+  await h.command('U1', { cmd: 'scene', n: 9 }, 'r1c');
+  assert.match(replies.at(-1).text, /4 ซีน/);
+
+  await h.postback('U1', b, 'r2');                                                    // approve images -> voices + video
   assert.match(replies.at(-1).text, /กำลังทำวิดีโอ/);
-  assert.match(calls.at(-1).voiceUrl, /speech\/F\?/);                                 // plan said female
+  const urls = calls.filter((c) => c.voiceUrl);
+  assert.equal(urls.length, 4);
+  assert.match(urls[0].voiceUrl, /speech\/F\?/);                                      // plan said female
   const vid = pushes.at(-1);
   assert.match(vid[0].text, /\/vid\/[0-9a-f-]{36}\.mp4/);
-  assert.equal(store.state.ledger.length, 4);                                         // script + image + voice + render
+  assert.equal(store.state.ledger.length, 6 + 4 + 1);                                 // + 6 voices + render
   const d = parsePostback(vid[1].template.actions[0].data);
   assert.equal(d.gate, 'D');
   await h.postback('U1', d, 'r3');
@@ -95,7 +118,9 @@ test('produce: script before Gate A; A approves plan and image is made; B approv
   assert.equal(store.jobs.at(-1).state, 'gate_D_ok');
 
   await h.postback('U1', a, 'r4');                                                    // double tap: nothing runs twice
-  assert.equal(store.state.ledger.length, 4);
+  await h.command('U1', { cmd: 'makevideo' }, 'r5');                                  // retry: voices reused, render replayed
+  assert.equal(store.state.ledger.length, 11);
+  assert.match(pushes.at(-1)[0].text, /ไม่คิดเงินซ้ำ/);
 });
 
 test('produce on a health channel still drafts the script (no expert gate needed for a draft)', async () => {
@@ -126,14 +151,17 @@ test('เขียนเอง: owner script is kept word for word (even over 40
   const { store, h, pushes } = build();
   const customFetch = async (u, i) => {
     customFetch.body = JSON.parse(i.body);
-    return { ok: true, json: async () => ({ id: 'm', content: [{ type: 'text', text: JSON.stringify({ title: 'เป็นคนดีไว้', image_prompt: 'A calm person at sunrise on a hill, soft light, vertical', voice: 'male', script: 'MODEL TRIED TO REWRITE' }) }] }) };
+    const n = Number(/Number of scenes: (\d+)/.exec(JSON.parse(i.body).messages[0].content)?.[1]);
+    return { ok: true, json: async () => ({ id: 'm', content: [{ type: 'text', text: JSON.stringify({ title: 'MODEL TITLE', voice: 'male', image_prompts: Array.from({ length: n }, () => 'A calm hill at sunrise'), script: 'MODEL TRIED TO REWRITE' }) }] }) };
   };
   store.createJob; // same store/gateway wiring as build(), but with a custom Claude fetch:
   const g = createGateway({ store, dailyCapThb: 1000, adapters: { anthropic: createScriptAdapter({ apiKey: 'k', fetchImpl: customFetch }) } });
   const h2 = createHandlers({ store, reply: async () => {}, push: async (u, m) => pushes.push(m), gateway: g, images: createImageCache(), baseUrl: 'x' });
   await h2.command('U1', cmd, 'r0');
-  assert.match(customFetch.body.system, /Do NOT rewrite/);
+  assert.match(customFetch.body.system, /art director/);        // only the visual call is made
   assert.equal(store.jobs.at(-1).plan.script, cmd.script);                      // not the model's version
   assert.equal(store.jobs.at(-1).plan.voice, 'male');
+  assert.equal(store.jobs.at(-1).plan.title, 'เป็นคนดีไว้ ไม่เสียใจทีหลัง');
+  assert.equal(store.jobs.at(-1).plan.scenes.map((x) => x.text).join('\n'), cmd.script.replace(/\n\s*\n/g, '\n'));   // scenes cover the script verbatim
   assert.match(pushes.at(-1)[0].text, /แผนงาน/);
 });

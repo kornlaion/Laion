@@ -38,6 +38,7 @@ export function createMemoryStore({ jobs = [], rates = [], approvals = [], kille
     async addAsset({ jobId, r2Key, kind }) {
       const id = crypto.randomUUID(); (state.assets ??= []).push({ id, jobId, r2Key, kind }); return id;
     },
+    async listAssets(jobId, kind) { return (state.assets ?? []).filter((a) => a.jobId === jobId && a.kind === kind); },
     async latestAsset(jobId, kind) {
       const l = (state.assets ?? []).filter((a) => a.jobId === jobId && a.kind === kind); return l.at(-1) ?? null;
     },
