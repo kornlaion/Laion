@@ -68,7 +68,7 @@ function build() {
   } });
   const replies = [], pushes = [];
   const h = createHandlers({ store, reply: async (t, m) => replies.push(m[0]), push: async (u, m) => pushes.push(m), gateway, images: createImageCache(), storage, baseUrl: 'https://x.test', contactSheet });
-  return { store, h, replies, pushes, calls, files };
+  return { store, h, replies, pushes, calls, files, gateway, storage };
 }
 
 test('produce: script+plan before Gate A; A makes every scene + contact sheet; B makes voices+video; D closes', { skip: !hasFfmpeg }, async () => {
@@ -216,3 +216,37 @@ test('งาน and ส่งวิดีโอ: list recent jobs, resend the la
   assert.match(replies.at(-1).text, /love G1 ทดสอบ/);
   assert.deepEqual(parseCommand('ส่งวิดีโอ'), { cmd: 'sendvideo' });
 });
+
+test('Gate C: health channel script goes to experts; B alone does not start voice/video; expert approval resumes it; only experts decide C', { skip: !hasFfmpeg }, async () => {
+  const b = build();
+  const pushesTo = [];
+  const h = createHandlers({ store: b.store, reply: async (t, m) => b.replies.push(m[0]), push: async (u, m) => { pushesTo.push([u, m]); b.pushes.push(m); }, gateway: b.gateway, images: createImageCache(), storage: b.storage, baseUrl: 'https://x.test', contactSheet, planProvider: 'anthropic', experts: new Set(['E1', 'E2']), owners: ['U1'] });
+  await h.command('U1', parseCommand('ผลิต healthtech G1 เรื่องการนอนหลับ'), 'g0');
+  const toExperts = pushesTo.filter(([u]) => u.startsWith('E'));
+  assert.equal(toExperts.length, 2);
+  assert.match(toExperts[0][1][0].text, /ไม่มีคำแนะนำทางการแพทย์/);
+  const c = parsePostback(toExperts[0][1][1].template.actions[0].data);
+  assert.equal(c.gate, 'C');
+  const planPush = pushesTo.find(([u]) => u === 'U1')[1];
+  const a = parsePostback(planPush[1].template.actions[0].data);
+
+  await h.postback('E1', a, 'g1');                                           // expert cannot press A
+  assert.match(b.replies.at(-1).text, /เฉพาะ Gate C/);
+  await h.postback('U1', c, 'g2');                                           // owner cannot press C
+  assert.match(b.replies.at(-1).text, /ผู้เชี่ยวชาญเป็นผู้ตัดสิน/);
+
+  await h.postback('U1', a, 'g3');                                           // A -> images + sheet
+  const sheet = pushesTo.filter(([u]) => u === 'U1').at(-1)[1];
+  const bb = parsePostback(sheet[2].template.actions[0].data);
+  await h.postback('U1', bb, 'g4');                                          // B without C: waits
+  assert.match(b.replies.at(-1).text, /Gate C/);
+  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 0);
+
+  await h.postback('E1', c, 'g5');                                           // expert approves -> video runs
+  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 4);
+  assert.match(pushesTo.filter(([u]) => u === 'U1').at(-1)[1][0].text, /\/vid\//);
+  await h.postback('E2', c, 'g6');
+  assert.match(b.replies.at(-1).text, /ตัดสินไปแล้ว/);                     // first decision is final
+});
+
+test('ไอดี command parses', () => assert.deepEqual(parseCommand('ไอดี'), { cmd: 'whoami' }));

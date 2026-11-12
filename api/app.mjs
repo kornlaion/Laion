@@ -29,7 +29,7 @@ const REASONS = {
   provider_error: 'ผู้ให้บริการตอบผิดพลาด',
 };
 
-export function createHandlers({ store, reply, push, gateway, images, storage, baseUrl, contactSheet, planProvider = 'anthropic', dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
+export function createHandlers({ store, reply, push, gateway, images, storage, baseUrl, contactSheet, planProvider = 'anthropic', experts = new Set(), owners = [], dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
   const reasonText = (out) => `${REASONS[out.reason] ?? (out.reason.startsWith('gate_missing') ? 'ยังไม่ผ่านด่านอนุมัติที่จำเป็น' : out.reason)}${out.reason === 'provider_error' && out.message ? ` (${out.message})` : ''}`;
 
   /** Saves to R2 (permanent) when configured, else the temporary in-memory cache. Returns the id used in the URL. */
@@ -102,6 +102,23 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     ]);
   }
 
+
+
+  // ---------- Gate C (expert review) for health/wellbeing channels ----------
+  const needsC = (job) => job.requiresExpert;
+  const cOk = async (job) => !needsC(job) || (await store.approvedGates(job.id)).includes('C');
+  const WAIT_C = 'ช่องนี้ต้องให้ผู้เชี่ยวชาญตรวจเนื้อหา (Gate C) ก่อนทำเสียงและวิดีโอ ระบบส่งให้ผู้เชี่ยวชาญแล้ว เมื่ออนุมัติจะทำต่อให้อัตโนมัติ (ถ้าผ่าน Gate B แล้ว)';
+
+  async function notifyExperts(job, plan) {
+    if (!needsC(job) || !push || experts.size === 0) return false;
+    const body = `ขอให้ตรวจเนื้อหา (ช่อง ${job.channelId})\nหัวข้อ: ${plan.title}\n\nสคริปต์:\n${plan.script}\n\nโปรดตรวจว่าเป็นข้อมูลทั่วไป ไม่มีคำแนะนำทางการแพทย์ การวินิจฉัย หรือคำกล่าวอ้างสรรพคุณ`;
+    for (const id of experts) {
+      try { await push(id, [text(body), approvalCard(job.id, 'C', `Gate C ผู้เชี่ยวชาญ\n${plan.title}\nตรวจสคริปต์แล้วกดผล`)]); }
+      catch (err) { console.error('expert_push_error', err?.message ?? err); }
+    }
+    return true;
+  }
+  const tellOwners = async (msgs) => { for (const id of owners) { try { await push(id, msgs); } catch (err) { console.error('owner_push_error', err?.message ?? err); } } };
 
   // ---------- multi-scene (ZEN) flow ----------
   const sceneIdx = (a) => Number(/scene-(\d+)-/.exec(a.r2Key)?.[1] ?? -1);
@@ -293,7 +310,8 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
           const plan = { title: cmd.topic, script: cmd.script, voice: cmd.voice ?? 'female', custom: true,
             scenes: texts.map((t, i) => ({ text: t, visual: cmd.prompts[i], image_prompt: cmd.prompts[i] })) };
           await store.setPlan(jobId, plan);
-          await reply(replyToken, [text('รับเรื่องและพรอมต์ภาพของคุณแล้ว')]);
+          const sentC = await notifyExperts({ id: jobId, channelId: cmd.channel, requiresExpert: EXPERT_CHANNELS.has(cmd.channel) }, plan);
+          await reply(replyToken, [text(`รับเรื่องและพรอมต์ภาพของคุณแล้ว${sentC ? '\nส่งสคริปต์ให้ผู้เชี่ยวชาญตรวจ (Gate C) แล้ว' : ''}`)]);
           return push(userId, [
             text(planText(plan, 0)),
             approvalCard(jobId, 'A', `Gate A แผนงาน\n${cmd.channel} ${cmd.grade}\n${plan.title}\nอนุมัติแล้วระบบสร้างภาพ ${plan.scenes.length} ซีนต่อทันที`),
@@ -305,8 +323,9 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         if (out.replay) return push(userId, [text('คำสั่งนี้ถูกทำไปแล้ว ไม่คิดเงินซ้ำ')]);
         const plan = out.result.plan;
         await store.setPlan(jobId, plan);
+        const sentC = await notifyExperts({ id: jobId, channelId: cmd.channel, requiresExpert: EXPERT_CHANNELS.has(cmd.channel) }, plan);
         if (plan.scenes) return push(userId, [
-          text(planText(plan, out.costThb)),
+          text(planText(plan, out.costThb) + (sentC ? '\n\nส่งสคริปต์ให้ผู้เชี่ยวชาญตรวจ (Gate C) แล้ว' : '')),
           approvalCard(jobId, 'A', `Gate A แผนงาน\n${cmd.channel} ${cmd.grade}\n${plan.title}\nอนุมัติแล้วระบบสร้างภาพ ${plan.scenes.length} ซีนต่อทันที`),
         ]);
         return push(userId, [
@@ -321,6 +340,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         const job = await latestA();
         if (!job?.plan?.scenes) return reply(replyToken, [text(NO_JOB)]);
         if (!(await store.approvedGates(job.id)).includes('B')) return reply(replyToken, [text('ต้องผ่าน Gate B (อนุมัติภาพ) ก่อนทำวิดีโอ')]);
+        if (!(await cOk(job))) return reply(replyToken, [text(WAIT_C)]);
         await reply(replyToken, [text('กำลังทำวิดีโอ (เสียง + จัดจังหวะ + ซับไทย) ใช้เวลาประมาณ 2-3 นาที')]);
         return doSceneVideo(userId, job);
       }
@@ -346,12 +366,25 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
   async function postback(userId, pb, replyToken) {
     const job = await store.getJob(pb.jobId);
     if (!job) return reply(replyToken, [text('ไม่พบงานนี้')]);
+    const isExpert = experts.has(userId);
+    if (pb.gate === 'C' && !isExpert) return reply(replyToken, [text('Gate C ต้องให้ผู้เชี่ยวชาญเป็นผู้ตัดสิน')]);
+    if (pb.gate !== 'C' && isExpert) return reply(replyToken, [text('ผู้เชี่ยวชาญตัดสินได้เฉพาะ Gate C')]);
     if (await store.hasApproval(pb.jobId, pb.gate)) return reply(replyToken, [text(`Gate ${pb.gate} ตัดสินไปแล้ว`)]);
     const ok = await store.approvedGates(pb.jobId);
     if (pb.gate === 'B' && !ok.includes('A')) return reply(replyToken, [text('ต้องผ่าน Gate A ก่อน')]);
     if (pb.gate === 'D' && !(ok.includes('A') && ok.includes('B'))) return reply(replyToken, [text('ต้องผ่าน Gate A และ B ก่อน')]);
     await store.addApproval({ jobId: pb.jobId, gate: pb.gate, userId, decision: pb.decision });
     await store.setJobState(pb.jobId, pb.decision === 'approve' ? `gate_${pb.gate}_ok` : pb.decision);
+    if (pb.gate === 'C') {
+      const label = { approve: 'อนุมัติ', revise: 'ขอให้แก้ไข', reject: 'ไม่อนุมัติ' }[pb.decision];
+      await reply(replyToken, [text(`บันทึกแล้ว: ${label} ขอบคุณครับ`)]);
+      await tellOwners([text(`ผู้เชี่ยวชาญ${label} Gate C: ${job.plan?.title ?? job.topic}${pb.decision === 'approve' ? '' : '\nงานนี้ยังทำเสียงและวิดีโอไม่ได้'}`)]);
+      if (pb.decision === 'approve' && job.plan?.scenes && gateway && push && storage && (await store.approvedGates(job.id)).includes('B')) {
+        await tellOwners([text('ผ่านครบ Gate B และ C แล้ว กำลังทำวิดีโอ ใช้เวลาประมาณ 2-3 นาที')]);
+        return doSceneVideo(owners[0], job);
+      }
+      return;
+    }
     const next = {
       approve: pb.gate === 'B' ? 'ผ่าน Gate B แล้ว ทำวิดีโอต่อได้: วิดีโอ <ข้อความพากย์>'
         : pb.gate === 'D' ? 'ผ่าน Gate D แล้ว (การโพสต์อัตโนมัติยังไม่เปิดใช้งาน ดาวน์โหลดไฟล์ไปโพสต์เองได้)' : `Gate ${pb.gate}: อนุมัติแล้ว`,
@@ -365,6 +398,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         return doScenes(userId, job, job.plan.scenes.map((_, i) => i), { keyBase: `auto-img:${job.id}` });
       }
       if (pb.gate === 'B') {
+        if (!(await cOk(job))) return reply(replyToken, [text(`ผ่าน Gate B แล้ว\n${WAIT_C}`)]);
         await reply(replyToken, [text('ผ่าน Gate B แล้ว กำลังทำวิดีโอ (เสียง + จัดจังหวะ + ซับไทย) ใช้เวลาประมาณ 2-3 นาที')]);
         return doSceneVideo(userId, job);
       }
@@ -384,5 +418,8 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     return reply(replyToken, [text(next)]);
   }
 
-  return { command, postback };
+  /** Anyone may ask for their own LINE user ID (needed to register an expert). It grants nothing by itself. */
+  const whoami = (userId, replyToken) => reply(replyToken, [text(`LINE user ID ของคุณ:\n${userId}\n(ส่งให้เจ้าของระบบเพื่อลงทะเบียน)`)]);
+
+  return { command, postback, whoami };
 }

@@ -37,6 +37,7 @@ export function parseCommand(text) {
   if (t === 'สถานะ') return { cmd: 'status' };
   if (t === 'งบ') return { cmd: 'budget' };
   if (t === 'งาน') return { cmd: 'jobs' };
+  if (t === 'ไอดี') return { cmd: 'whoami' };
   if (t === 'ส่งวิดีโอ') return { cmd: 'sendvideo' };
   let m = t.match(/^สร้าง (\S+) (G[0-4]) (.+)$/);
   if (m) return { cmd: 'create', channel: m[1], grade: m[2], topic: m[3] };
