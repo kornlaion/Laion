@@ -19,6 +19,7 @@ create table jobs (
   cap_thb          numeric not null,
   requires_expert  boolean not null default false,
   idempotency_key  text unique not null,
+  plan             jsonb,
   created_at       timestamptz not null default now()
 );
 

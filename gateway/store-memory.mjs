@@ -11,6 +11,7 @@ export function createMemoryStore({ jobs = [], rates = [], approvals = [], kille
       jobs.push({ id, state: 'planned', ...j });
       return id;
     },
+    async setPlan(id, plan) { jobs.find((j) => j.id === id).plan = plan; },
     async setJobState(id, s) { jobs.find((j) => j.id === id).state = s; },
     async hasApproval(jobId, gate) { return state.approvals.some((a) => a.jobId === jobId && a.gate === gate && a.decision !== 'revise'); },
     async addApproval(a) { state.approvals.push(a); },

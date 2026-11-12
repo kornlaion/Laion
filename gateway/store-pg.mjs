@@ -6,8 +6,10 @@ export function createPgStore(pool) {
   const one = async (sql, args) => (await pool.query(sql, args)).rows[0] ?? null;
   return {
     getJob: (id) => one(
-      `select id, channel_id as "channelId", grade, requires_expert as "requiresExpert", cap_thb as "capThb"
+      `select id, channel_id as "channelId", grade, topic, plan, requires_expert as "requiresExpert", cap_thb as "capThb"
          from jobs where id = $1`, [id]),
+
+    setPlan: (id, plan) => pool.query(`update jobs set plan = $2::jsonb where id = $1`, [id, JSON.stringify(plan)]),
 
     latestApprovedJob: (gate) => one(
       `select j.id, j.channel_id as "channelId", j.grade, j.topic, j.requires_expert as "requiresExpert", j.cap_thb as "capThb"

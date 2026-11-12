@@ -68,6 +68,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const { createOpenAIImageAdapter } = await import('../providers/openai-image.mjs');
   const { createElevenLabsAdapter } = await import('../providers/elevenlabs.mjs');
   const { createRenderAdapter } = await import('../providers/render.mjs');
+  const { createScriptAdapter } = await import('../providers/anthropic-script.mjs');
   const secret = process.env.LINE_CHANNEL_SECRET ?? '';
   const allow = new Set((process.env.LINE_ALLOWED_USER_IDS ?? '').split(',').filter(Boolean));
   if (!secret || allow.size === 0) { console.error('Set LINE_CHANNEL_SECRET and LINE_ALLOWED_USER_IDS'); process.exit(1); }
@@ -77,7 +78,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const storage = r2Configured() ? createR2() : null;
   console.log(storage ? 'storage: R2' : 'storage: memory only (set R2_* variables)');
   const assets = storage ? async (id) => { const a = await store.getAsset(id); return a ? storage.get(a.r2Key) : null; } : null;
-  const gateway = createGateway({ store, adapters: { openai: createOpenAIImageAdapter(), elevenlabs: createElevenLabsAdapter(), render: createRenderAdapter({ storage }) } });
+  const gateway = createGateway({ store, adapters: { openai: createOpenAIImageAdapter(), elevenlabs: createElevenLabsAdapter(), render: createRenderAdapter({ storage }), anthropic: createScriptAdapter() } });
   const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
   const baseUrl = process.env.PUBLIC_BASE_URL ?? (domain ? `https://${domain}` : '');
   if (!baseUrl) console.error('PUBLIC_BASE_URL / RAILWAY_PUBLIC_DOMAIN not set: image replies will fail');

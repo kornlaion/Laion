@@ -6,13 +6,14 @@ export const WARN_RATIO = 0.8;
 
 // Which gates must be approved before each action.
 const REQUIRED_GATES = {
+  script: [],          // a cheap draft shown to the owner BEFORE Gate A, so Gate A approves a real plan
   image: ['A'],
   voice: ['A'],
   video: ['A', 'B'],   // Veo is paid only after the keyframe is approved
   render: ['A', 'B'],
   publish: ['A', 'B', 'D'],
 };
-const PAID_ACTIONS = new Set(['image', 'voice', 'video', 'render']);
+const PAID_ACTIONS = new Set(['script', 'image', 'voice', 'video', 'render']);
 
 /**
  * @param {object} p
@@ -37,7 +38,7 @@ export function decide({ req, job, spentJobThb, spentTodayThb, dailyCapThb, kill
 
   const gates = REQUIRED_GATES[req.action];
   if (!gates) return deny('unknown_action');
-  const need = job.requiresExpert && req.action !== 'image' ? [...gates, 'C'] : gates;
+  const need = job.requiresExpert && !['image', 'script'].includes(req.action) ? [...gates, 'C'] : gates;
   const missing = need.filter((g) => !approvedGates.includes(g));
   if (missing.length) return deny(`gate_missing_${missing.join('')}`);
 
