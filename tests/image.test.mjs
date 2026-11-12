@@ -151,3 +151,14 @@ test('voice: billed per 1k chars at list price, mp3 saved and served, replay not
   assert.match(pushes.at(-1)[0].text, /ไม่สำเร็จ.*elevenlabs_422/);
   assert.equal(store.state.ledger.length, 1);
 });
+
+test('voice gender: ชาย/หญิง pick their own voice id, default otherwise', async () => {
+  const urls = [];
+  const fetchImpl = async (url) => { urls.push(url); return { ok: true, headers: { get: () => null }, arrayBuffer: async () => Buffer.from('a') }; };
+  const a = createElevenLabsAdapter({ apiKey: 'k', voiceId: 'DEF', voices: { male: 'MAN', female: 'WOMAN' }, fetchImpl });
+  for (const voice of ['male', 'female', undefined]) await a.call({ text: 'x', voice });
+  assert.deepEqual(urls.map((u) => u.match(/speech\/(\w+)\?/)[1]), ['MAN', 'WOMAN', 'DEF']);
+  assert.deepEqual(parseCommand('เสียง หญิง สวัสดี'), { cmd: 'voice', voice: 'female', text: 'สวัสดี' });
+  assert.equal(parseCommand('เสียง ชาย สวัสดี').voice, 'male');
+  assert.equal(parseCommand('เสียง สวัสดีครับ').voice, undefined);
+});

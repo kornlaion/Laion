@@ -3,7 +3,8 @@
 // Price unit is '1k_chars' (provider_rates), billed at list price per 1,000 characters.
 export function createElevenLabsAdapter({
   apiKey = process.env.ELEVENLABS_API_KEY,
-  voiceId = process.env.ELEVENLABS_VOICE_ID,
+  voiceId = process.env.ELEVENLABS_VOICE_ID,                 // default voice (used when no gender is given)
+  voices = { female: process.env.ELEVENLABS_VOICE_FEMALE, male: process.env.ELEVENLABS_VOICE_MALE },
   model = process.env.ELEVENLABS_MODEL ?? 'eleven_v4',
   languageCode = process.env.ELEVENLABS_LANG || undefined,   // optional ISO 639-1, e.g. 'th'
   fetchImpl = fetch,
@@ -14,8 +15,9 @@ export function createElevenLabsAdapter({
     units: (p) => [...String(p.text ?? '')].length / 1000,
     async call(p) {
       if (!apiKey) throw new Error('ELEVENLABS_API_KEY missing');
-      if (!voiceId) throw new Error('ELEVENLABS_VOICE_ID missing');
-      const res = await fetchImpl(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`, {
+      const voice = (p.voice && voices[p.voice]) || voiceId;
+      if (!voice) throw new Error('voice id missing');
+      const res = await fetchImpl(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'xi-api-key': apiKey },
         body: JSON.stringify({ text: p.text, model_id: model, ...(languageCode ? { language_code: languageCode } : {}) }),

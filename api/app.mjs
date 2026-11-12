@@ -92,7 +92,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         await reply(replyToken, [text(`กำลังสร้างเสียง ${[...cmd.text].length} ตัวอักษร รอสักครู่`)]);
         const out = await gateway.run({
           jobId: job.id, action: 'voice', provider: 'elevenlabs',
-          params: { text: cmd.text }, idempotencyKey: `voice:${replyToken}`, actor: 'worker',
+          params: { text: cmd.text, voice: cmd.voice }, idempotencyKey: `voice:${replyToken}`, actor: 'worker',
         });
         if (!out.ok) return push(userId, [text(`สร้างเสียงไม่สำเร็จ: ${reasonText(out)}`)]);
         if (out.replay) return push(userId, [text('คำสั่งนี้ถูกทำไปแล้ว ไม่คิดเงินซ้ำ')]);
