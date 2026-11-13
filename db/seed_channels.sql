@@ -4,5 +4,5 @@ insert into channels (id, name, lane, daily_cap_thb, soft_launch) values
   ('mindbody',   'Mind Body & Wellbeing',   'D', 150, true),
   ('energy-ai',  'Energy EV + AI Tech',     'C', 300, false),
   ('healthtech', 'HealthTech & Longevity',  'D', 150, true),
-  ('pet',        'PET / IP Character',      'B', 300, false)
+  ('pet',        'LAION UNIVERSE (IP Character + Weekly Horoscope)',      'B', 300, false)
 on conflict (id) do nothing;

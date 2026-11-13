@@ -6,11 +6,11 @@ import { sceneCount, splitScenes } from '../render/scenes.mjs';
 import { MODES, DEFAULT_MODE, lengthFor } from '../render/formats.mjs';
 
 export const CHANNEL_GUIDE = {
-  love: 'Warm, romantic, hopeful. Short heartfelt lines about love and small happy moments.',
-  mindbody: 'Calm, gentle, grounding. General wellbeing habits only. NEVER give medical advice, diagnoses, treatments or health claims.',
-  'energy-ai': 'Clear, curious, factual tone about EVs, energy and AI tools. Keep claims general; do not invent numbers, prices or specs.',
-  healthtech: 'Plain-language explainers about health technology. NEVER give medical advice, diagnoses, treatment or efficacy claims; say it is general information.',
-  pet: 'Playful, cute, funny story about a pet character. Light, family friendly.',
+  love: 'Channel KORN AVA (Love & Happiness). Music-led: write short, lyrical, heartfelt lines with room to breathe so music carries the mood. Warm, romantic, hopeful; small happy moments.',
+  mindbody: 'Channel Melody Svaha. Calm, gentle, grounding. General wellbeing habits only. NEVER give medical advice, diagnoses, treatments or health claims.',
+  'energy-ai': 'Channel LAION BEYOND. Clear, curious, factual tone about EVs, energy and AI tools. Keep claims general; do not invent numbers, prices or specs.',
+  healthtech: 'Channel LAION EVER. Plain-language explainers about health technology. NEVER give medical advice, diagnoses, treatment or efficacy claims; say it is general information.',
+  pet: 'Channel LAION UNIVERSE: an original IP character plus weekly horoscope. Playful, warm, family friendly. Horoscope is entertainment only: general, positive, never predict illness, money, death or make guarantees; say it is for fun.',
 };
 
 // Shared look so every scene feels like one film. Appended to every scene prompt in code.
