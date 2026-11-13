@@ -19,7 +19,8 @@ export function ideasCarousel(ideas) {
     template: {
       type: 'carousel',
       columns: ideas.slice(0, 10).map((x) => ({
-        title: `${x.rank}. ${x.title}`.slice(0, 40), text: (x.hook || '-').slice(0, 120),
+        // LINE: with a title the text may be only 60 characters, without a title 120 - so the title goes inside the text.
+        text: `${x.rank}. ${x.title}\n${x.hook || ''}`.slice(0, 120),
         actions: [
           { type: 'postback', label: 'ผลิตเรื่องนี้', data: `idea:${x.id}:make` },
           { type: 'postback', label: 'แหล่งที่มา', data: `idea:${x.id}:src` },

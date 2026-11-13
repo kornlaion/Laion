@@ -44,6 +44,8 @@ export function createMemoryStore({ jobs = [], rates = [], approvals = [], kille
     },
     async getAsset(id) { return (state.assets ?? []).find((a) => a.id === id) ?? null; },
     async stuckJobs(hours) { const cut = Date.now() - hours * 3600_000; return jobs.filter((j) => !['gate_D_ok', 'reject', 'research'].includes(j.state) && new Date(j.createdAt).getTime() < cut).map((j) => ({ id: j.id, channelId: j.channelId, grade: j.grade, topic: j.topic, state: j.state })); },
+    async wasDone(key) { return (state.done ??= new Set()).has(key); },
+    async markDone(key) { (state.done ??= new Set()).add(key); },
     async listChannels() { return [...channels]; },
     async addIdeas(channelId, runDate, ideas) { state.ideas ??= []; ideas.forEach((x, i) => state.ideas.push({ id: crypto.randomUUID(), channelId, runDate, rank: i + 1, status: 'new', ...x })); },
     async listIdeas(channelId, runDate) {

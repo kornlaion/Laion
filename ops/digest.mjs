@@ -17,30 +17,31 @@ export async function buildDigest({ store, dailyCapThb }) {
 }
 
 export function startScheduler({ store, push, owners, dailyCapThb, digestHour = Number(process.env.DIGEST_HOUR ?? 20), researchAt = process.env.RESEARCH_TIME ?? '07:30', research, warnRatio = 0.8, tickMs = 60_000, now = () => new Date() }) {
-  let digestOn = null, warnOn = null, researchOn = null;
+  // Marks live in the database (audit_log), so a redeploy or restart never repeats a message already sent today.
+  const once = async (kind, date, fn) => {
+    const key = `${kind}:${date}`;
+    if (await store.wasDone(key)) return;
+    await fn();
+    await store.markDone(key);
+  };
   const [rh, rm] = researchAt.split(':').map(Number);
   const send = async (text) => { for (const id of owners) { try { await push(id, [{ type: 'text', text }]); } catch (e) { console.error('digest_push_error', e?.message ?? e); } } };
   async function tick() {
     const { date, hour, minute } = bkk(now());
     try {
       const spent = await store.spentTodayThb();
-      if (spent >= dailyCapThb * warnRatio && warnOn !== date) {
-        warnOn = date;
-        await send(`เตือนงบ: ใช้วันนี้ ฿${spent.toFixed(2)} ถึง ${Math.round((spent / dailyCapThb) * 100)}% ของเพดานรายวัน ฿${dailyCapThb}`);
+      if (spent >= dailyCapThb * warnRatio) {
+        await once('budget-warn', date, () => send(`เตือนงบ: ใช้วันนี้ ฿${spent.toFixed(2)} ถึง ${Math.round((spent / dailyCapThb) * 100)}% ของเพดานรายวัน ฿${dailyCapThb}`));
       }
-      if (research && researchOn !== date && (hour > rh || (hour === rh && minute >= rm))) {
-        researchOn = date;
+      if (research && (hour > rh || (hour === rh && minute >= rm))) await once('research', date, async () => {
         const done = [], failed = [];
         for (const ch of await store.listChannels()) {
           try { const r = await research(ch, date); (r.ok ? done : failed).push(r.ok ? (r.replay ? `${ch} (มีแล้ว)` : `${ch} ${r.count}`) : `${ch}: ${r.reason}`); }
           catch (e) { failed.push(`${ch}: ${e?.message ?? e}`); }
         }
         await send(['ไอเดียหัวข้อวันนี้พร้อมแล้ว', done.join(' · ') || '-', ...(failed.length ? ['ไม่สำเร็จ:', ...failed] : []), '', 'พิมพ์ ไอเดีย <ช่อง> เช่น ไอเดีย love เพื่อดูและเลือกผลิต'].join('\n'));
-      }
-      if (hour >= digestHour && digestOn !== date) {
-        digestOn = date;
-        await send(await buildDigest({ store, dailyCapThb }));
-      }
+      });
+      if (hour >= digestHour) await once('digest', date, async () => send(await buildDigest({ store, dailyCapThb })));
     } catch (e) { console.error('scheduler_error', e?.message ?? e); }
   }
   const timer = setInterval(tick, tickMs);

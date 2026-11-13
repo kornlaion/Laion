@@ -88,6 +88,8 @@ export function createPgStore(pool) {
           where state not in ('gate_D_ok', 'reject', 'research') and created_at < now() - make_interval(hours => $1::int) order by created_at asc limit 50`, [hours]);
       return rows;
     },
+    async wasDone(key) { return (await pool.query(`select 1 from audit_log where actor = 'scheduler' and action = $1 limit 1`, [key])).rowCount > 0; },
+    async markDone(key) { await pool.query(`insert into audit_log (actor, action) values ('scheduler', $1)`, [key]); },
     async listChannels() { return (await pool.query(`select id from channels order by id`)).rows.map((r) => r.id); },
     async addIdeas(channelId, runDate, ideas) {
       for (let i = 0; i < ideas.length; i++) {

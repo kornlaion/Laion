@@ -85,7 +85,11 @@ test('ideas command shows a 10-column carousel; buttons: source list, skip, prod
   await h.command('U1', { cmd: 'ideas', channel: 'pet' }, 'r1');
   const car = replies.at(-1)[1];
   assert.equal(car.template.columns.length, 10);
-  assert.ok(car.template.columns.every((c) => c.title.length <= 40 && c.text.length <= 120 && c.actions.length === 3));
+  // LINE carousel limits: no title -> text up to 120 chars; max 10 columns; same number of actions per column (max 3); label <= 20; data <= 300
+  assert.ok(car.template.columns.every((c) => c.title === undefined && c.text.length <= 120 && c.actions.length === 3
+    && c.actions.every((a) => a.label.length <= 20 && a.data.length <= 300)));
+  assert.ok(car.altText.length <= 400);
+  assert.match(car.template.columns[0].text, /^1\. หัวข้อที่ 1\nเล่าเรื่องที่ 1/);
   const mk = parseIdeaPostback(car.template.columns[0].actions[0].data);
   const src = parseIdeaPostback(car.template.columns[0].actions[1].data);
   const skip = parseIdeaPostback(car.template.columns[1].actions[2].data);
@@ -100,4 +104,16 @@ test('ideas command shows a 10-column carousel; buttons: source list, skip, prod
   await h.idea('U1', mk, 'r6');
   assert.match(replies.at(-1)[0].text, /เลือกไอเดียนี้ไปแล้ว/);
   assert.ok(ideasCarousel([]).template.columns.length === 0);
+});
+
+test('restart-safe: a second scheduler (after a redeploy) does not repeat the research summary or digest already sent today', async () => {
+  const { store, gateway } = world();
+  const sent = [];
+  const t = new Date('2026-11-13T13:30:00Z');                         // 20:30 Bangkok: research (07:30) and digest (20:00) are both due
+  const make = () => startScheduler({ store, push: async (id, m) => sent.push(m[0].text), owners: ['U1'], dailyCapThb: 1000, now: () => t, tickMs: 3600_000,
+    research: (ch, date) => researchChannel({ store, gateway, channelId: ch, date }) });
+  await make().tick();
+  assert.equal(sent.length, 2);
+  await make().tick();                                                // "new process"
+  assert.equal(sent.length, 2);
 });

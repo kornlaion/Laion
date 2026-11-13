@@ -1,3 +1,8 @@
+/** LINE's own error text (which message/field it rejected). Never contains the token. */
+async function errorDetail(res) {
+  try { return JSON.stringify(await res.json()).slice(0, 300); } catch { return ''; }
+}
+
 // LINE Reply API client. Reply tokens are short-lived and single use.
 export function createLineReply({ token = process.env.LINE_CHANNEL_ACCESS_TOKEN, fetchImpl = fetch } = {}) {
   return async function reply(replyToken, messages) {
@@ -8,7 +13,7 @@ export function createLineReply({ token = process.env.LINE_CHANNEL_ACCESS_TOKEN,
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: JSON.stringify({ replyToken, messages }),
     });
-    if (!res.ok) console.error('line_reply_failed', res.status);
+    if (!res.ok) console.error('line_reply_failed', res.status, await errorDetail(res));
   };
 }
 
@@ -21,7 +26,7 @@ export function createLinePush({ token = process.env.LINE_CHANNEL_ACCESS_TOKEN, 
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: JSON.stringify({ to: userId, messages }),
     });
-    if (!res.ok) console.error('line_push_failed', res.status);
+    if (!res.ok) console.error('line_push_failed', res.status, await errorDetail(res));
   };
 }
 
