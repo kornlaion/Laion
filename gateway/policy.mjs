@@ -6,6 +6,7 @@ export const WARN_RATIO = 0.8;
 
 // Which gates must be approved before each action.
 const REQUIRED_GATES = {
+  caption: ['A', 'B', 'D'],   // publish pack (captions/hashtags), only after the final video is approved
   research: [],        // daily topic research, billed to a per-channel system job
   script: [],          // a cheap draft shown to the owner BEFORE Gate A, so Gate A approves a real plan
   image: ['A'],
@@ -14,7 +15,7 @@ const REQUIRED_GATES = {
   render: ['A', 'B'],
   publish: ['A', 'B', 'D'],
 };
-const PAID_ACTIONS = new Set(['research', 'script', 'image', 'voice', 'video', 'render']);
+const PAID_ACTIONS = new Set(['research', 'caption', 'script', 'image', 'voice', 'video', 'render']);
 
 /**
  * @param {object} p

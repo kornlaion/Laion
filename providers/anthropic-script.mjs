@@ -37,6 +37,25 @@ Reply with ONLY a JSON object (no markdown) with exactly these keys:
 - "voice": "female" or "male", whichever suits the script.
 - "image_prompts": an array with exactly one English prompt per scene, in order.`;
 
+const SYSTEM_CAPTION = `You write posting copy for one finished Thai short video, for four platforms. Reply with ONLY a JSON object (no markdown):
+{"tiktok":{"caption":"...","hashtags":["..."]},"instagram":{"caption":"...","hashtags":["..."]},"youtube":{"title":"...","description":"...","hashtags":["..."]},"facebook":{"caption":"...","hashtags":["..."]}}
+Rules: Thai; start with a hook line that makes people stop; captions short (1-3 lines), warm and natural, one gentle call to action at most; 3-5 relevant hashtags without the # sign (youtube must include "Shorts"); YouTube title at most 90 characters; never invent facts, numbers or claims; no medical advice, no cure or efficacy claims; no real brand or person names; family friendly.`;
+
+export function parseCaptions(raw) {
+  const o = jsonOf(raw);
+  const tags = (a) => (Array.isArray(a) ? a : []).map((x) => String(x).replace(/^#+/, '').replace(/\s+/g, '')).filter(Boolean).slice(0, 8);
+  const str = (x, n) => String(x ?? '').trim().slice(0, n);
+  const out = {
+    tiktok: { caption: str(o.tiktok?.caption, 300), hashtags: tags(o.tiktok?.hashtags) },
+    instagram: { caption: str(o.instagram?.caption, 600), hashtags: tags(o.instagram?.hashtags) },
+    youtube: { title: str(o.youtube?.title, 100), description: str(o.youtube?.description, 500), hashtags: tags(o.youtube?.hashtags) },
+    facebook: { caption: str(o.facebook?.caption, 600), hashtags: tags(o.facebook?.hashtags) },
+  };
+  if (!out.tiktok.caption || !out.instagram.caption || !out.youtube.title || !out.facebook.caption) throw new Error('caption_incomplete');
+  if (!out.youtube.hashtags.some((h) => h.toLowerCase() === 'shorts')) out.youtube.hashtags.push('Shorts');
+  return out;
+}
+
 const jsonOf = (raw) => {
   const s = String(raw ?? '');
   const a = s.indexOf('{'), b = s.lastIndexOf('}');
@@ -96,8 +115,12 @@ export function createScriptAdapter({
   return {
     unit: 'call',
     model: () => model,
-    units: (p) => (p.script ? 1 : 2),
+    units: (p) => (p.task === 'caption' ? 1 : p.script ? 1 : 2),
     async call(p) {
+      if (p.task === 'caption') {
+        const c = await ask(SYSTEM_CAPTION, `Channel: ${p.channel}\nStyle: ${CHANNEL_GUIDE[p.channel] ?? 'Friendly and clear.'}\nTitle: ${p.title}\nVoice-over (Thai):\n${p.script}`, 1200);
+        return { captions: parseCaptions(c.text), externalId: c.id };
+      }
       const guide = `Channel: ${p.channel}\nStyle: ${CHANNEL_GUIDE[p.channel] ?? 'Friendly and clear.'}\nGrade: ${p.grade}`;
       let title = p.topic, script = p.script, voice;
       let lastId = null;

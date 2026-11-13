@@ -62,6 +62,7 @@ export function parseCommand(text) {
   m = t.match(/^ซีน (\d{1,2})(?: (.{3,600}))?$/);
   if (m) return { cmd: 'scene', n: Number(m[1]), prompt: m[2] };
   if (t === 'ทำวิดีโอ') return { cmd: 'makevideo' };
+  if (t === 'แคปชัน') return { cmd: 'captions' };
   m = t.match(/^เปลี่ยนเสียง (ชาย|หญิง)$/);
   if (m) return { cmd: 'setvoice', voice: m[1] === 'ชาย' ? 'male' : 'female' };
   m = t.match(/^คลิป (\d{1,2})$/);

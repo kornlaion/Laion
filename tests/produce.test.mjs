@@ -351,3 +351,31 @@ test('clip formats: ผลิต ... | โหมด parsed; writer prompt carrie
   assert.match(pushes.at(-1)[0].text, /ความยาวโดยประมาณ \d+ วินาที \(โหมดไวรัล 7-15 วินาที\)/);
   assert.match(pushes.at(-1)[0].text, /ตะขอ 3 วินาทีแรก: "วันหนึ่งฉันเจอเธอที่ริมทะเล"/);
 });
+
+test('Gate D approval produces the publish pack (captions + hashtags for 4 platforms); แคปชัน regenerates; replay is free', async () => {
+  const b = build();
+  const capFetch = async (url, init) => {
+    capFetch.n = (capFetch.n ?? 0) + 1;
+    const out = { tiktok: { caption: 'ตะขอสั้น ๆ', hashtags: ['#คนดี', 'กำลังใจ'] }, instagram: { caption: 'อินสตาแกรม', hashtags: ['คนดี'] }, youtube: { title: 'ชื่อคลิป', description: 'รายละเอียด', hashtags: ['คนดี'] }, facebook: { caption: 'เฟซบุ๊ก', hashtags: ['คนดี'] } };
+    return { ok: true, json: async () => ({ id: 'c1', content: [{ type: 'text', text: JSON.stringify(out) }] }) };
+  };
+  const rep = [], push = [];
+  const gateway2 = createGateway({ store: b.store, dailyCapThb: 1000, adapters: { anthropic: createScriptAdapter({ apiKey: 'k', fetchImpl: capFetch }) } });
+  const h = createHandlers({ store: b.store, reply: async (t, m) => rep.push(m[0]), push: async (u, m) => push.push(m), gateway: gateway2, images: createImageCache(), baseUrl: 'https://x.test', planProvider: 'anthropic', owners: ['U1'] });
+  const jobId = await b.store.createJob({ channelId: 'love', grade: 'G1', topic: 't', capThb: 35, requiresExpert: false, idempotencyKey: 'job:x' });
+  await b.store.setPlan(jobId, { title: 'เป็นคนดีไว้', script: 'บรรทัดหนึ่ง\nบรรทัดสอง', voice: 'male', scenes: [{ text: 'บรรทัดหนึ่ง' }, { text: 'บรรทัดสอง' }] });
+  const vid = await b.store.addAsset({ jobId, r2Key: `jobs/${jobId}/v.mp4`, kind: 'video' });
+  for (const g of ['A', 'B']) await b.store.addApproval({ jobId, gate: g, userId: 'U1', decision: 'approve' });
+  assert.deepEqual(parseCommand('แคปชัน'), { cmd: 'captions' });
+  await h.postback('U1', { jobId, gate: 'D', decision: 'approve', nonce: 'n' }, 'd1');
+  const pack = push.at(-1)[0].text;
+  assert.match(pack, /TikTok\nตะขอสั้น ๆ\n#คนดี #กำลังใจ/);
+  assert.match(pack, /YouTube Shorts\nชื่อ: ชื่อคลิป[\s\S]*#คนดี #Shorts/);
+  assert.match(pack, new RegExp(`https://x.test/vid/${vid}.mp4`));
+  assert.match(pack, /ป้ายเนื้อหาที่สร้างหรือแก้ไขด้วย AI/);
+  assert.equal(capFetch.n, 1);
+  assert.equal(b.store.state.ledger.length, 1);
+  await h.command('U1', { cmd: 'captions' }, 'd2');                       // asks for a fresh set: one more small charge
+  assert.equal(capFetch.n, 2);
+  assert.equal(b.store.state.ledger.length, 2);
+});

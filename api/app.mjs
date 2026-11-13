@@ -144,6 +144,33 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
   }
   const tellOwners = async (msgs) => { for (const id of owners) { try { await push(id, msgs); } catch (err) { console.error('owner_push_error', err?.message ?? err); } } };
 
+  // ---------- publish pack: captions for the four platforms, to post by hand until the platform APIs are connected ----------
+  const packText = (plan, c, videoUrl) => {
+    const tags = (a) => a.map((h) => `#${h}`).join(' ');
+    return [
+      `ชุดโพสต์: ${plan.title}`, videoUrl ? `ไฟล์วิดีโอ: ${videoUrl}` : '', '',
+      `TikTok\n${c.tiktok.caption}\n${tags(c.tiktok.hashtags)}`, '',
+      `Instagram Reels\n${c.instagram.caption}\n${tags(c.instagram.hashtags)}`, '',
+      `YouTube Shorts\nชื่อ: ${c.youtube.title}\n${c.youtube.description}\n${tags(c.youtube.hashtags)}`, '',
+      `Facebook Reels\n${c.facebook.caption}\n${tags(c.facebook.hashtags)}`, '',
+      'อย่าลืมติดป้ายเนื้อหาที่สร้างหรือแก้ไขด้วย AI ตามเงื่อนไขของแต่ละแพลตฟอร์ม และตรวจกติกาความยาว/รูปแบบล่าสุดก่อนโพสต์',
+      '(ระบบยังไม่โพสต์อัตโนมัติ จนกว่าจะเชื่อมแพลตฟอร์ม)',
+    ].filter((x, i, a) => x !== '' || a[i - 1] !== '').join('\n');
+  };
+
+  async function doPublishPack(userId, job, { force = false, key } = {}) {
+    const video = await store.latestAsset(job.id, 'video');
+    const url = video ? `${baseUrl}/vid/${video.id}.mp4` : '';
+    if (job.plan.captions && !force) return push(userId, [text(packText(job.plan, job.plan.captions, url))]);
+    const out = await gateway.run({ jobId: job.id, action: 'caption', provider: planProvider, actor: 'worker',
+      params: { task: 'caption', channel: job.channelId, title: job.plan.title, script: job.plan.script }, idempotencyKey: key ?? `caption:${job.id}` });
+    if (!out.ok) return push(userId, [text(`สร้างแคปชันไม่สำเร็จ: ${reasonText(out)}\nพิมพ์ แคปชัน เพื่อลองใหม่`)]);
+    if (out.replay) return push(userId, [text(job.plan.captions ? packText(job.plan, job.plan.captions, url) : 'ชุดแคปชันถูกสร้างไปแล้ว พิมพ์ แคปชัน เพื่อสร้างใหม่')]);
+    job.plan.captions = out.result.captions;
+    await store.setPlan(job.id, job.plan);
+    return push(userId, [text(`${packText(job.plan, out.result.captions, url)}\n\nค่าแคปชันโดยประมาณ ฿${out.costThb.toFixed(2)}`)]);
+  }
+
   // ---------- multi-scene (ZEN) flow ----------
   const sceneIdx = (a) => Number(/scene-(\d+)-/.exec(a.r2Key)?.[1] ?? -1);
   /** Latest asset per scene index (later rows replace earlier ones, so a regenerated scene wins). */
@@ -416,6 +443,14 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         await store.setPlan(job.id, job.plan);
         return reply(replyToken, [text(`เปลี่ยนเป็นเสียง${cmd.voice === 'male' ? 'ชาย' : 'หญิง'}แล้ว พิมพ์ ทำวิดีโอ เพื่อทำเสียงและเรนเดอร์ใหม่ (ค่าเสียงใหม่คิดตามจริง ส่วนเสียงเดิมของเสียงนั้นถ้าเคยทำไว้จะไม่คิดซ้ำ)`)]);
       }
+      case 'captions': {
+        if (!gateway || !push) return reply(replyToken, [text('ระบบยังไม่ได้ตั้งค่า')]);
+        const job = await latestA();
+        if (!job?.plan?.scenes) return reply(replyToken, [text(NO_JOB)]);
+        if (!(await store.approvedGates(job.id)).includes('D')) return reply(replyToken, [text('ต้องผ่าน Gate D (อนุมัติวิดีโอสุดท้าย) ก่อนสร้างชุดโพสต์')]);
+        await reply(replyToken, [text('กำลังสร้างแคปชันและแฮชแท็ก 4 แพลตฟอร์ม')]);
+        return doPublishPack(userId, job, { force: true, key: `caption:${job.id}:${replyToken}` });
+      }
       case 'scene':
         return sceneCommand(userId, cmd, replyToken);
       case 'makevideo': {
@@ -479,6 +514,10 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         : pb.gate === 'D' ? 'รับทราบ ให้แก้: พิมพ์ วิดีโอ <ข้อความพากย์ใหม่> เพื่อทำใหม่' : `Gate ${pb.gate}: ขอแก้ไข`,
       reject: `Gate ${pb.gate}: ยกเลิกงานนี้`,
     }[pb.decision];
+    if (pb.decision === 'approve' && pb.gate === 'D' && job.plan?.scenes && gateway && push) {
+      await reply(replyToken, [text('ผ่าน Gate D แล้ว กำลังสร้างชุดโพสต์ (แคปชัน + แฮชแท็ก 4 แพลตฟอร์ม)')]);
+      return doPublishPack(userId, job);
+    }
     if (pb.decision === 'approve' && job.plan?.scenes && gateway && push && storage && contactSheet) {
       if (pb.gate === 'A') {
         await reply(replyToken, [text(`อนุมัติแผนแล้ว กำลังสร้างภาพ ${job.plan.scenes.length} ซีน รอสักครู่`)]);
