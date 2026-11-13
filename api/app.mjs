@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { GRADE_CAP_THB } from '../gateway/policy.mjs';
 import { STYLE_ZEN } from '../providers/anthropic-script.mjs';
-import { splitScenes } from '../render/scenes.mjs';
+import { splitScenes, sceneSeconds, MAX_SCENE_CHARS } from '../render/scenes.mjs';
 
 // Lane D channels (health / wellbeing) need expert Gate C before video, voice and publish.
 const EXPERT_CHANNELS = new Set(['mindbody', 'healthtech']);
@@ -167,7 +167,8 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     const bufs = [];
     for (let i = 0; i < scenes.length; i++) { const a = have.get(i); if (a) bufs.push(await storage.get(a.r2Key)); }
     if (!bufs.length) return push(userId, [text(header)]);
-    const sheet = await contactSheet(bufs);
+    const many = bufs.length > 6;
+    const sheet = await contactSheet(bufs, many ? { cols: 4, cellW: 270, cellH: 405 } : undefined);
     const key = `jobs/${job.id}/sheet-${crypto.randomBytes(4).toString('hex')}.jpg`;
     await storage.put(key, sheet, 'image/jpeg');
     const id = await store.addAsset({ jobId: job.id, r2Key: key, kind: 'sheet' });
@@ -180,7 +181,8 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     const scenes = job.plan.scenes;
     const have = await bySceneIndex(job.id, 'image');
     const todo = indices.filter((i) => force || !have.has(i));
-    const quality = QUALITY[job.grade] ?? 'low';
+    // Many short scenes: keep image cost inside the grade cap by using the cheaper quality for G0/G1 past 8 scenes.
+    const quality = scenes.length > 8 && ['G0', 'G1'].includes(job.grade) ? 'low' : (QUALITY[job.grade] ?? 'low');
     let cost = 0; const failed = []; let replays = 0;
     let next = 0;
     const worker = async () => {
@@ -251,8 +253,10 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
   }
 
   const planText = (plan, cost) => {
-    const rows = plan.scenes.map((sc, i) => `${i + 1}. ${[...sc.text.replace(/\n/g, ' ')].slice(0, 28).join('')}…\n   ภาพ: ${[...(sc.visual ?? '')].slice(0, 70).join('')}`).join('\n');
-    return `แผนงาน: ${plan.title}\n${plan.scenes.length} ซีน, ${[...plan.script].length} ตัวอักษร, เสียง${plan.voice === 'male' ? 'ชาย' : 'หญิง'}${plan.custom ? ', ภาพตามพรอมต์ของคุณ' : ', โทน ZEN'}\n\n${rows}\n\n${plan.custom ? 'ไม่มีค่าเขียนสคริปต์ (ใช้พรอมต์ของคุณ)' : `ค่าเขียนสคริปต์ประมาณ ฿${cost.toFixed(2)}`}`;
+    const rows = plan.scenes.map((sc, i) => `${i + 1}. ${[...sc.text.replace(/\n/g, ' ')].slice(0, 28).join('')}…${plan.scenes.length > 8 ? '' : `\n   ภาพ: ${[...(sc.visual ?? '')].slice(0, 70).join('')}`}`).join('\n');
+    const long = plan.scenes.map((sc, i) => [i + 1, [...sc.text.replace(/\s+/g, '')].length]).filter(([, n]) => n > MAX_SCENE_CHARS * 1.3).map(([i, n]) => `ซีน ${i} (~${sceneSeconds(n).toFixed(0)} วินาที)`);
+    const warn = long.length ? `\n\nเตือน: ซีนเหล่านี้น่าจะค้างภาพเกิน 5 วินาที: ${long.join(', ')}\nควรเพิ่มซีนหรือแบ่งบรรทัดให้สั้นลง` : '';
+    return `แผนงาน: ${plan.title}\n${plan.scenes.length} ซีน, ${[...plan.script].length} ตัวอักษร, เสียง${plan.voice === 'male' ? 'ชาย' : 'หญิง'}${plan.custom ? ', ภาพตามพรอมต์ของคุณ' : ', โทน ZEN'}\n\n${rows}\n\n${plan.custom ? 'ไม่มีค่าเขียนสคริปต์ (ใช้พรอมต์ของคุณ)' : `ค่าเขียนสคริปต์ประมาณ ฿${cost.toFixed(2)}`}${warn}`;
   };
 
   async function sceneCommand(userId, cmd, replyToken) {
@@ -325,7 +329,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
       case 'custom': {
         if (!gateway || !push) return reply(replyToken, [text('ระบบสร้างงานยังไม่ได้ตั้งค่า')]);
         if (!(await store.channelExists(cmd.channel))) return reply(replyToken, [text(`ไม่พบช่อง "${cmd.channel}"`)]);
-        if (cmd.prompts && splitScenes(cmd.script, cmd.prompts.length).length !== cmd.prompts.length) {
+        if (cmd.prompts && splitScenes(cmd.script, cmd.prompts.length, { enforce: false }).length !== cmd.prompts.length) {
           return reply(replyToken, [text(`เรื่องของคุณมีบรรทัดน้อยกว่าจำนวนซีน (${cmd.prompts.length} ซีน) แต่ละซีนต้องมีอย่างน้อย 1 บรรทัด กรุณาแบ่งเรื่องเป็นบรรทัดเพิ่ม`)]);
         }
         const jobId = await store.createJob({
@@ -334,7 +338,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
           idempotencyKey: `job:${crypto.randomUUID()}`,
         });
         if (cmd.prompts) {                                   // owner supplied the scene prompts: no model call, no cost
-          const texts = splitScenes(cmd.script, cmd.prompts.length);
+          const texts = splitScenes(cmd.script, cmd.prompts.length, { enforce: false });
           if (texts.length !== cmd.prompts.length) return reply(replyToken, [text(`เรื่องของคุณมี ${texts.length} บรรทัด แต่ใส่พรอมต์ ${cmd.prompts.length} ซีน จำนวนบรรทัดของเรื่องต้องไม่น้อยกว่าจำนวนซีน (แต่ละซีนต้องมีอย่างน้อย 1 บรรทัด)`)]);
           const plan = { title: cmd.topic, script: cmd.script, voice: cmd.voice ?? 'female', custom: true,
             scenes: texts.map((t, i) => ({ text: t, visual: cmd.prompts[i], image_prompt: cmd.prompts[i] })) };
@@ -410,7 +414,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         if (!job?.plan?.scenes) return reply(replyToken, [text(NO_JOB)]);
         if (!(await store.approvedGates(job.id)).includes('B')) return reply(replyToken, [text('ต้องผ่าน Gate B (อนุมัติภาพ) ก่อนทำวิดีโอ')]);
         if (!(await cOk(job))) return reply(replyToken, [text(WAIT_C)]);
-        await reply(replyToken, [text('กำลังทำวิดีโอ (เสียง + จัดจังหวะ + ซับไทย) ใช้เวลาประมาณ 2-3 นาที')]);
+        await reply(replyToken, [text('กำลังทำวิดีโอ (เสียง + จัดจังหวะ + ซับไทย) ใช้เวลา 2-6 นาที (ยิ่งหลายซีนยิ่งนาน)')]);
         return doSceneVideo(userId, job);
       }
       case 'pause': {
@@ -453,7 +457,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
       await reply(replyToken, [text(`บันทึกแล้ว: ${label} ขอบคุณครับ`)]);
       await tellOwners([text(`ผู้เชี่ยวชาญ${label} Gate C: ${job.plan?.title ?? job.topic}${pb.decision === 'approve' ? '' : '\nงานนี้ยังทำเสียงและวิดีโอไม่ได้'}`)]);
       if (pb.decision === 'approve' && job.plan?.scenes && gateway && push && storage && (await store.approvedGates(job.id)).includes('B')) {
-        await tellOwners([text('ผ่านครบ Gate B และ C แล้ว กำลังทำวิดีโอ ใช้เวลาประมาณ 2-3 นาที')]);
+        await tellOwners([text('ผ่านครบ Gate B และ C แล้ว กำลังทำวิดีโอ ใช้เวลา 2-6 นาที (ยิ่งหลายซีนยิ่งนาน)')]);
         return doSceneVideo(owners[0], job);
       }
       return;
@@ -472,7 +476,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
       }
       if (pb.gate === 'B') {
         if (!(await cOk(job))) return reply(replyToken, [text(`ผ่าน Gate B แล้ว\n${WAIT_C}`)]);
-        await reply(replyToken, [text('ผ่าน Gate B แล้ว กำลังทำวิดีโอ (เสียง + จัดจังหวะ + ซับไทย) ใช้เวลาประมาณ 2-3 นาที')]);
+        await reply(replyToken, [text('ผ่าน Gate B แล้ว กำลังทำวิดีโอ (เสียง + จัดจังหวะ + ซับไทย) ใช้เวลา 2-6 นาที (ยิ่งหลายซีนยิ่งนาน)')]);
         return doSceneVideo(userId, job);
       }
     }

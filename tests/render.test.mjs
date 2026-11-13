@@ -54,3 +54,18 @@ test('aligned cues follow the real speech timing; mismatching alignment falls ba
   assert.equal(est[0].start, 0);                                            // bad alignment: estimated cues (start at 0, even weights)
   assert.equal(est.length, cues.length);
 });
+
+test('5-second rule: long scripts get more scenes, every scene fits, words unchanged; owner-chosen count is kept and warned about', async () => {
+  const { splitScenes, sceneCount, MAX_SCENE_CHARS } = await import('../render/scenes.mjs');
+  const story = ['คนเรานะ… ไม่ว่าจะเจออะไรในชีวิต ก็อย่าลืมเป็นคนดี', 'ต่อให้ต้องถูกหลอกสักกี่ครั้ง ก็อย่าเลือกที่จะไปหลอกใครกลับ', 'และต่อให้ใครจะทำไม่ดีกับเรา ก็อย่าเปลี่ยนตัวเองให้กลายเป็นคนไม่ดีเหมือนเขา', 'เพราะชีวิตคนเรา ไม่ได้แข่งกันว่าใครมีเงินมากกว่ากัน หรือใครประสบความสำเร็จมากกว่ากัน'].join('\n');
+  const flat = (x) => x.replace(/\s+/g, '');
+  const n = sceneCount([...story].length);
+  const scenes = splitScenes(story, n);
+  assert.ok(scenes.length >= 6);
+  assert.ok(scenes.every((x) => [...flat(x)].length <= MAX_SCENE_CHARS));
+  assert.equal(flat(scenes.join('')), flat(story));
+  const kept = splitScenes(story, 3, { enforce: false });                // owner supplied 3 prompts: exactly 3 scenes
+  assert.equal(kept.length, 3);
+  assert.equal(flat(kept.join('')), flat(story));
+  assert.ok(sceneCount(100) >= 3 && sceneCount(5000) <= 20);
+});

@@ -78,15 +78,15 @@ test('produce: script+plan before Gate A; A makes every scene + contact sheet; B
   assert.equal(claudeFetch.last.body.model, 'claude-sonnet-5-5');
   assert.match(claudeFetch.last.body.messages[0].content, /Channel: love/);
   const planMsg = pushes.at(-1);
-  assert.match(planMsg[0].text, /4 ซีน/);
+  assert.match(planMsg[0].text, /5 ซีน/);
   assert.equal(store.state.ledger.length, 1);                                         // one script action (2 Claude calls), no image yet
   assert.equal(calls.length, 0);
   const a = parsePostback(planMsg[1].template.actions[0].data);
   assert.equal(a.gate, 'A');
 
   await h.postback('U1', a, 'r1');                                                    // approve plan -> all scene images automatically
-  assert.match(replies.at(-1).text, /กำลังสร้างภาพ 4 ซีน/);
-  assert.equal(calls.length, 4);
+  assert.match(replies.at(-1).text, /กำลังสร้างภาพ 5 ซีน/);
+  assert.equal(calls.length, 5);
   assert.match(calls[0].prompt, /Quiet sea detail number \d.*Japanese zen minimalism/);
   assert.equal(calls[0].quality, 'medium');                                           // G1 -> medium
   const sheetPush = pushes.at(-1);
@@ -94,23 +94,23 @@ test('produce: script+plan before Gate A; A makes every scene + contact sheet; B
   assert.match(sheetPush[0].originalContentUrl, /\/img\/[0-9a-f-]{36}\.jpg$/);
   const b = parsePostback(sheetPush[2].template.actions[0].data);
   assert.equal(b.gate, 'B');
-  assert.equal(store.state.ledger.length, 5);
+  assert.equal(store.state.ledger.length, 6);
 
   await h.command('U1', { cmd: 'scene', n: 2, prompt: 'A single stone in still water' }, 'r1b');   // redo one scene
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 6);
   assert.match(calls.at(-1).prompt, /^A single stone in still water\. Japanese zen/);
-  assert.equal(store.state.ledger.length, 6);
+  assert.equal(store.state.ledger.length, 7);
   await h.command('U1', { cmd: 'scene', n: 9 }, 'r1c');
-  assert.match(replies.at(-1).text, /4 ซีน/);
+  assert.match(replies.at(-1).text, /5 ซีน/);
 
   await h.postback('U1', b, 'r2');                                                    // approve images -> voices + video
   assert.match(replies.at(-1).text, /กำลังทำวิดีโอ/);
   const urls = calls.filter((c) => c.voiceUrl);
-  assert.equal(urls.length, 4);
+  assert.equal(urls.length, 5);
   assert.match(urls[0].voiceUrl, /speech\/F[/?]/);                                      // plan said female
   const vid = pushes.at(-1);
   assert.match(vid[0].text, /\/vid\/[0-9a-f-]{36}\.mp4/);
-  assert.equal(store.state.ledger.length, 6 + 4 + 1);                                 // + 6 voices + render
+  assert.equal(store.state.ledger.length, 7 + 5 + 1);                                 // + 6 voices + render
   const d = parsePostback(vid[1].template.actions[0].data);
   assert.equal(d.gate, 'D');
   await h.postback('U1', d, 'r3');
@@ -119,7 +119,7 @@ test('produce: script+plan before Gate A; A makes every scene + contact sheet; B
 
   await h.postback('U1', a, 'r4');                                                    // double tap: nothing runs twice
   await h.command('U1', { cmd: 'makevideo' }, 'r5');                                  // retry: voices reused, render replayed
-  assert.equal(store.state.ledger.length, 11);
+  assert.equal(store.state.ledger.length, 13);
   assert.match(pushes.at(-1)[0].text, /ไม่คิดเงินซ้ำ/);
 });
 
@@ -162,7 +162,8 @@ test('เขียนเอง: owner script is kept word for word (even over 40
   assert.equal(store.jobs.at(-1).plan.script, cmd.script);                      // not the model's version
   assert.equal(store.jobs.at(-1).plan.voice, 'male');
   assert.equal(store.jobs.at(-1).plan.title, 'เป็นคนดีไว้ ไม่เสียใจทีหลัง');
-  assert.equal(store.jobs.at(-1).plan.scenes.map((x) => x.text).join('\n'), cmd.script.replace(/\n\s*\n/g, '\n'));   // scenes cover the script verbatim
+  const flat = (x) => x.replace(/\s+/g, '');
+  assert.equal(flat(store.jobs.at(-1).plan.scenes.map((x) => x.text).join('')), flat(cmd.script));   // scenes cover the script verbatim (only line breaks may move)
   assert.match(pushes.at(-1)[0].text, /แผนงาน/);
 });
 
@@ -200,7 +201,7 @@ test('OpenAI planner: chat completions request shape, JSON mode, plan built, err
   assert.equal(seen.init.headers.authorization, 'Bearer sk-x');
   assert.equal(seen.body.model, 'gpt-4.1');
   assert.deepEqual(seen.body.response_format, { type: 'json_object' });
-  assert.equal(out.plan.scenes.length, 4);
+  assert.equal(out.plan.scenes.length, 5);
   assert.match(out.plan.scenes[0].image_prompt, /^p0\. Japanese zen/);
   const bad = createScriptAdapter({ vendor: 'openai', apiKey: 'k', fetchImpl: async () => ({ ok: false, status: 400, json: async () => ({ error: { message: 'model not found' } }) }) });
   await assert.rejects(bad.call({ channel: 'love', grade: 'G1', topic: 't', script: LINES.join('\n') }), /openai_text_400: model not found/);
@@ -243,7 +244,7 @@ test('Gate C: health channel script goes to experts; B alone does not start voic
   assert.equal(b.calls.filter((x) => x.voiceUrl).length, 0);
 
   await h.postback('E1', c, 'g5');                                           // expert approves -> video runs
-  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 4);
+  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 5);
   assert.match(pushesTo.filter(([u]) => u === 'U1').at(-1)[1][0].text, /\/vid\//);
   await h.postback('E2', c, 'g6');
   assert.match(b.replies.at(-1).text, /ตัดสินไปแล้ว/);                     // first decision is final
@@ -261,7 +262,7 @@ test('Gate C without registered experts: owner is the expert, approving the plan
   assert.deepEqual((await b.store.approvedGates(b.store.jobs.at(-1).id)).sort(), ['A', 'C']);
   const bb = parsePostback(b.pushes.at(-1)[2].template.actions[0].data);
   await h.postback('U1', bb, 'm2');
-  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 4);                 // video runs with no waiting for anyone else
+  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 5);                 // video runs with no waiting for anyone else
 });
 
 test('คลิป: owner video attaches to a scene, is stored as a clip, and the next render uses it (clip too short is held, not looped)', { skip: !hasFfmpeg }, async () => {
@@ -301,16 +302,16 @@ test('เปลี่ยนเสียง: new voice regenerates the takes, swi
   const bb = parsePostback(b.pushes.at(-1)[2].template.actions[0].data);
   await b.h.postback('U1', bb, 'v2');                                        // female voice (plan default)
   const base = b.store.state.ledger.length;
-  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 4);
+  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 5);
   await b.h.command('U1', { cmd: 'setvoice', voice: 'male' }, 'v3');
   await b.h.command('U1', { cmd: 'makevideo' }, 'v4');
-  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 8);                 // 4 new takes
+  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 10);                // 5 new takes
   assert.match(b.calls.filter((x) => x.voiceUrl).at(-1).voiceUrl, /speech\/M[/?]/);
-  assert.equal(b.store.state.ledger.length, base + 5);                       // 4 voices + 1 render
+  assert.equal(b.store.state.ledger.length, base + 6);                       // 5 voices + 1 render
   await b.h.command('U1', { cmd: 'setvoice', voice: 'female' }, 'v5');
   await b.h.command('U1', { cmd: 'makevideo' }, 'v6');
-  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 8);                 // nothing re-made
-  assert.equal(b.store.state.ledger.length, base + 5);                       // same inputs as the first render: replay, free
+  assert.equal(b.calls.filter((x) => x.voiceUrl).length, 10);                // nothing re-made
+  assert.equal(b.store.state.ledger.length, base + 6);                       // same inputs as the first render: replay, free
 });
 
 test('ElevenLabs timestamps: alignment returned when asked; broken timestamps reply falls back to the plain endpoint', async () => {
