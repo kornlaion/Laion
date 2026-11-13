@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { GRADE_CAP_THB } from '../gateway/policy.mjs';
 import { STYLE_ZEN } from '../providers/anthropic-script.mjs';
 import { splitScenes, sceneSeconds, MAX_SCENE_CHARS } from '../render/scenes.mjs';
+import { MODES, DEFAULT_MODE, estimateSeconds } from '../render/formats.mjs';
 
 // Lane D channels (health / wellbeing) need expert Gate C before video, voice and publish.
 const EXPERT_CHANNELS = new Set(['mindbody', 'healthtech']);
@@ -256,7 +257,15 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     const rows = plan.scenes.map((sc, i) => `${i + 1}. ${[...sc.text.replace(/\n/g, ' ')].slice(0, 28).join('')}…${plan.scenes.length > 8 ? '' : `\n   ภาพ: ${[...(sc.visual ?? '')].slice(0, 70).join('')}`}`).join('\n');
     const long = plan.scenes.map((sc, i) => [i + 1, [...sc.text.replace(/\s+/g, '')].length]).filter(([, n]) => n > MAX_SCENE_CHARS * 1.3).map(([i, n]) => `ซีน ${i} (~${sceneSeconds(n).toFixed(0)} วินาที)`);
     const warn = long.length ? `\n\nเตือน: ซีนเหล่านี้น่าจะค้างภาพเกิน 5 วินาที: ${long.join(', ')}\nควรเพิ่มซีนหรือแบ่งบรรทัดให้สั้นลง` : '';
-    return `แผนงาน: ${plan.title}\n${plan.scenes.length} ซีน, ${[...plan.script].length} ตัวอักษร, เสียง${plan.voice === 'male' ? 'ชาย' : 'หญิง'}${plan.custom ? ', ภาพตามพรอมต์ของคุณ' : ', โทน ZEN'}\n\n${rows}\n\n${plan.custom ? 'ไม่มีค่าเขียนสคริปต์ (ใช้พรอมต์ของคุณ)' : `ค่าเขียนสคริปต์ประมาณ ฿${cost.toFixed(2)}`}${warn}`;
+    const chars = [...plan.scenes.map((sc) => sc.text).join('').replace(/\s+/g, '')].length;
+    const est = estimateSeconds(chars, plan.scenes.length);
+    const m = MODES[plan.mode ?? DEFAULT_MODE];
+    const hook = [...plan.scenes[0].text.split('\n')[0]].slice(0, 40).join('');
+    const lenNote = plan.custom || !plan.mode
+      ? (est > 90 ? '\nยาวเกิน 90 วินาที ควรตัดให้สั้นลง' : est > 60 ? '\nยาวกว่า 60 วินาที ถ้าเป็นเรื่องสั้นทั่วไปควรตัดให้กระชับ' : '')
+      : (est < m.secs[0] - 3 || est > m.secs[1] + 5 ? `\nความยาวต่างจากเป้าของโหมด${m.label} (${m.secs[0]}-${m.secs[1]} วินาที)` : '');
+    const head = `ความยาวโดยประมาณ ${Math.round(est)} วินาที${plan.mode ? ` (โหมด${m.label} ${m.secs[0]}-${m.secs[1]} วินาที)` : ''}\nตะขอ 3 วินาทีแรก: "${hook}"${lenNote}`;
+    return `แผนงาน: ${plan.title}\n${head}\n${plan.scenes.length} ซีน, ${[...plan.script].length} ตัวอักษร, เสียง${plan.voice === 'male' ? 'ชาย' : 'หญิง'}${plan.custom ? ', ภาพตามพรอมต์ของคุณ' : ', โทน ZEN'}\n\n${rows}\n\n${plan.custom ? 'ไม่มีค่าเขียนสคริปต์ (ใช้พรอมต์ของคุณ)' : `ค่าเขียนสคริปต์ประมาณ ฿${cost.toFixed(2)}`}${warn}`;
   };
 
   async function sceneCommand(userId, cmd, replyToken) {
@@ -351,7 +360,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
           ]);
         }
         await reply(replyToken, [text(cmd.script ? `รับสคริปต์ของคุณแล้ว (${[...cmd.script].length} ตัวอักษร) กำลังเตรียมภาพและเสียง: ${cmd.topic}` : `กำลังเขียนสคริปต์: ${cmd.topic}\nรอสักครู่`)]);
-        const out = await gateway.run({ jobId, action: 'script', provider: planProvider, params: { channel: cmd.channel, grade: cmd.grade, topic: cmd.topic, ...(cmd.script ? { script: cmd.script } : {}) }, idempotencyKey: `script:${replyToken}`, actor: 'worker' });
+        const out = await gateway.run({ jobId, action: 'script', provider: planProvider, params: { channel: cmd.channel, grade: cmd.grade, topic: cmd.topic, mode: cmd.mode ?? DEFAULT_MODE, ...(cmd.script ? { script: cmd.script } : {}) }, idempotencyKey: `script:${replyToken}`, actor: 'worker' });
         if (!out.ok) return push(userId, [text(`เขียนสคริปต์ไม่สำเร็จ: ${reasonText(out)}`)]);
         if (out.replay) return push(userId, [text('คำสั่งนี้ถูกทำไปแล้ว ไม่คิดเงินซ้ำ')]);
         const plan = out.result.plan;

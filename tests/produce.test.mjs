@@ -18,6 +18,7 @@ const WRITE = { title: 'รักแรกพบ', script: LINES.join('\n'), voi
 const claudeFetch = async (url, init) => {
   const body = JSON.parse(init.body);
   claudeFetch.last = { url, headers: init.headers, body };
+  (claudeFetch.history ??= []).push(body);
   claudeFetch.calls = (claudeFetch.calls ?? 0) + 1;
   const n = Number(/Number of scenes: (\d+)/.exec(body.messages[0].content)?.[1]);
   const out = /art director/.test(body.system)
@@ -332,4 +333,21 @@ test('ElevenLabs timestamps: alignment returned when asked; broken timestamps re
   await plain.call({ text: 'กข' });                                 // not asked for timestamps (single voice command): plain endpoint only
   assert.equal(plainUrls.length, 1);
   assert.doesNotMatch(plainUrls[0], /with-timestamps/);
+});
+
+test('clip formats: ผลิต ... | โหมด parsed; writer prompt carries the length budget and the hook/body/peak/close structure; plan shows estimate and hook', async () => {
+  assert.deepEqual(parseCommand('ผลิต love G1 รักแรกพบ | เล่าเรื่อง'), { cmd: 'produce', channel: 'love', grade: 'G1', topic: 'รักแรกพบ', mode: 'story' });
+  assert.equal(parseCommand('ผลิต love G1 รักแรกพบ | ไม่มีโหมดนี้'), null);
+  assert.equal(parseCommand('ผลิต love G1 รักแรกพบ').mode, undefined);
+  const { lengthFor } = await import('../render/formats.mjs');
+  assert.ok(lengthFor('standard').max < lengthFor('story').min + 80 && lengthFor('viral').target < lengthFor('standard').target && lengthFor('standard').target < lengthFor('long').target);
+  const { store, h, pushes } = build();
+  claudeFetch.calls = 0;
+  await h.command('U1', parseCommand('ผลิต love G1 รักแรกพบ | ไวรัล'), 'f0');
+  const writeCall = claudeFetch.history.filter((x) => !/art director/.test(x.system)).at(-1);
+  assert.match(writeCall.system, /HOOK[\s\S]*BODY[\s\S]*PEAK[\s\S]*CLOSE/);
+  assert.match(writeCall.system, /7-15 seconds/);
+  assert.equal(store.jobs.at(-1).plan.mode, 'viral');
+  assert.match(pushes.at(-1)[0].text, /ความยาวโดยประมาณ \d+ วินาที \(โหมดไวรัล 7-15 วินาที\)/);
+  assert.match(pushes.at(-1)[0].text, /ตะขอ 3 วินาทีแรก: "วันหนึ่งฉันเจอเธอที่ริมทะเล"/);
 });

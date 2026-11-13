@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { modeByName } from '../render/formats.mjs';
 
 /** LINE signs the RAW body (HMAC-SHA256, base64) in x-line-signature. Never parse before verifying. */
 export function verifySignature(rawBody, signatureHeader, channelSecret) {
@@ -48,7 +49,16 @@ export function parseCommand(text) {
   m = t.match(/^วิดีโอ (?:(ชาย|หญิง) )?(.{2,400})$/);
   if (m) return { cmd: 'video', voice: m[1] === 'ชาย' ? 'male' : m[1] === 'หญิง' ? 'female' : undefined, text: m[2] };
   m = t.match(/^ผลิต (\S+) (G[0-4]) (.{2,200})$/);
-  if (m) return { cmd: 'produce', channel: m[1], grade: m[2], topic: m[3] };
+  if (m) {
+    let topic = m[3], mode;
+    if (topic.includes('|')) {                              // optional clip format after a bar: ผลิต love G1 หัวข้อ | เล่าเรื่อง
+      const i = topic.lastIndexOf('|');
+      mode = modeByName(topic.slice(i + 1));
+      topic = topic.slice(0, i).trim();
+      if (!mode || topic.length < 2) return null;
+    }
+    return { cmd: 'produce', channel: m[1], grade: m[2], topic, ...(mode ? { mode } : {}) };
+  }
   m = t.match(/^ซีน (\d{1,2})(?: (.{3,600}))?$/);
   if (m) return { cmd: 'scene', n: Number(m[1]), prompt: m[2] };
   if (t === 'ทำวิดีโอ') return { cmd: 'makevideo' };

@@ -3,6 +3,7 @@
 //   2) design one image prompt per scene. Scene splitting itself is code (render/scenes.mjs), so words never change.
 // Request shape follows the public Messages API; UNVERIFIED live until the first real call.
 import { sceneCount, splitScenes } from '../render/scenes.mjs';
+import { MODES, DEFAULT_MODE, lengthFor } from '../render/formats.mjs';
 
 export const CHANNEL_GUIDE = {
   love: 'Warm, romantic, hopeful. Short heartfelt lines about love and small happy moments.',
@@ -15,11 +16,20 @@ export const CHANNEL_GUIDE = {
 // Shared look so every scene feels like one film. Appended to every scene prompt in code.
 export const STYLE_ZEN = 'Japanese zen minimalism, serene and elegant, soft diffused natural light, muted warm earth tones with a touch of sage green, generous negative space, shallow depth of field, fine film grain, vertical 2:3 composition with the subject in the upper two thirds and a calm quiet area in the lower third, no text, no letters, no logos, no watermark, no people facing the camera';
 
-const SYSTEM_WRITE = `You write short vertical-video scripts for an automated media channel. Reply with ONLY a JSON object (no markdown, no commentary) with exactly these keys:
+function writeSystem(modeKey) {
+  const m = MODES[modeKey] ?? MODES[DEFAULT_MODE];
+  const L = lengthFor(MODES[modeKey] ? modeKey : DEFAULT_MODE);
+  return `You write short vertical-video scripts for an automated media channel. Reply with ONLY a JSON object (no markdown, no commentary) with exactly these keys:
 - "title": Thai title, at most 40 characters.
-- "script": the Thai voice-over, natural spoken Thai, no emoji, no stage directions, no hashtags. Put each thought on its own line (separate lines with a newline). 300-600 characters for grades G0-G1, up to 900 for higher grades. Hard maximum 1000 characters.
+- "script": the Thai voice-over, natural spoken Thai, no emoji, no stage directions, no hashtags. Put each thought on its own line (separate lines with a newline), each line at most about 40 characters. Length: about ${L.target} Thai characters (between ${L.min} and ${L.max}), for a clip of ${m.secs[0]}-${m.secs[1]} seconds. Hard maximum 1000 characters.
 - "voice": "female" or "male", whichever suits the script.
+ALWAYS use this engaging structure:
+1. HOOK: the very first line, spoken in about 3 seconds (under 30 Thai characters). A question, a surprising claim or an intriguing promise that makes people stop scrolling. Never a greeting, never the channel name.
+2. BODY: clear and concise, one idea per line, no filler, every line must earn its place.
+3. PEAK: the key insight, twist or result, placed about 70-90% of the way through.
+4. CLOSE: one short closing line (a takeaway, a gentle invitation to follow, save or reflect), spoken in about 2 seconds. End right there.
 Rules: never invent statistics, prices, studies, quotes or news; do not name real brands or real people; keep it positive and safe for a general audience.`;
+}
 
 const SYSTEM_VISUAL = `You are the art director of a calm, elegant ZEN-style vertical video. You receive numbered scenes of a Thai voice-over. For each scene write ONE image prompt in English: a concrete, beautiful, minimal still that matches the feeling of that scene's words (nature, objects, hands, silhouettes, light, water, tea, stone, paper, fabric, mist...). Keep a consistent visual language across scenes. Never show readable text, real people's faces or brands. Do not describe the overall style (it is added automatically), only the subject and setting.
 Reply with ONLY a JSON object (no markdown) with exactly these keys:
@@ -92,7 +102,7 @@ export function createScriptAdapter({
       let title = p.topic, script = p.script, voice;
       let lastId = null;
       if (!script) {
-        const w = await ask(SYSTEM_WRITE, `${guide}\nTopic (Thai): ${p.topic}`);
+        const w = await ask(writeSystem(p.mode), `${guide}\nTopic (Thai): ${p.topic}`);
         ({ title, script, voice } = parseWrite(w.text));
         lastId = w.id;
       }
@@ -102,6 +112,7 @@ export function createScriptAdapter({
       lastId = v.id ?? lastId;
       const plan = {
         title: (p.script ? p.topic : title) || vis.title || 'ไม่มีชื่อ',
+        ...(p.script ? {} : { mode: p.mode ?? DEFAULT_MODE }),
         script,                                                       // owner's words byte for byte, or Claude's own script
         voice: voice ?? vis.voice,
         scenes: texts.map((text, i) => ({ text, visual: vis.prompts[i], image_prompt: `${vis.prompts[i]}. ${STYLE_ZEN}` })),
