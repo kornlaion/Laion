@@ -147,3 +147,22 @@ test('timed lyrics (LRC) skip the transcription; unmatched transcript asks for t
   await h.command('U1', parseCommand('ผลิตเพลง ไม่มีเพลงนี้ 0:10-0:40'), '8');
   assert.match(replies.at(-1).text, /ไม่พบเพลง/);
 });
+
+test('only the active channels can be produced or researched (phase 1: love)', async () => {
+  const { createMemoryStore: mk } = await import('../gateway/store-memory.mjs');
+  const { startScheduler } = await import('../ops/digest.mjs');
+  const store = mk({ rates: [] });
+  const replies = [];
+  const h = createHandlers({ store, reply: async (t, m) => replies.push(m[0]), push: async () => {}, gateway: {}, activeChannels: new Set(['love']), owners: ['U1'], research: async () => ({ ok: true }) });
+  await h.command('U1', parseCommand('ผลิต pet G1 หัวข้อทดสอบ'), '1');
+  assert.match(replies.at(-1).text, /ช่อง "pet" ยังไม่เปิดใช้งาน ตอนนี้เปิดเฉพาะ: love/);
+  await h.command('U1', parseCommand('ไอเดีย healthtech'), '2');
+  assert.match(replies.at(-1).text, /ยังไม่เปิดใช้งาน/);
+  await h.command('U1', parseCommand('ไอเดียใหม่ energy-ai'), '3');
+  assert.match(replies.at(-1).text, /ยังไม่เปิดใช้งาน/);
+  const asked = [];
+  const sched = startScheduler({ store: { ...store, wasDone: async () => false, markDone: async () => {}, spentTodayThb: async () => 0, summary: async () => ({ total: 0, byState: {}, spentToday: 0 }), stuckJobs: async () => [], listChannels: async () => ['love', 'mindbody', 'energy-ai', 'healthtech', 'pet'] },
+    push: async () => {}, owners: ['U1'], dailyCapThb: 1000, channels: ['love'], research: async (ch) => { asked.push(ch); return { ok: true, count: 10 }; }, now: () => new Date('2026-11-14T02:00:00Z') });
+  await sched.tick(); sched.stop();
+  assert.deepEqual(asked, ['love']);
+});

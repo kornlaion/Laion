@@ -52,7 +52,9 @@ const REASONS = {
   provider_error: 'ผู้ให้บริการตอบผิดพลาด',
 };
 
-export function createHandlers({ store, reply, push, gateway, images, storage, baseUrl, contactSheet, planProvider = 'anthropic', experts = new Set(), owners = [], content, research, dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
+export function createHandlers({ store, reply, push, gateway, images, storage, baseUrl, contactSheet, planProvider = 'anthropic', experts = new Set(), owners = [], content, research, activeChannels = null, dailyCapThb = Number(process.env.DAILY_CAP_THB ?? 1000) }) {
+  // Only these channels may be produced or researched (null = all). Phase 1: KORN AVA (love) only.
+  const notActive = (ch) => (activeChannels && !activeChannels.has(ch) ? `ช่อง "${ch}" ยังไม่เปิดใช้งาน ตอนนี้เปิดเฉพาะ: ${[...activeChannels].join(', ')}` : null);
   const reasonText = (out) => `${REASONS[out.reason] ?? (out.reason.startsWith('gate_missing') ? 'ยังไม่ผ่านด่านอนุมัติที่จำเป็น' : out.reason)}${out.reason === 'provider_error' && out.message ? ` (${out.message})` : ''}`;
 
   /** Saves to R2 (permanent) when configured, else the temporary in-memory cache. Returns the id used in the URL. */
@@ -334,6 +336,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         return reply(replyToken, [text(`ใช้วันนี้ ฿${spent.toFixed(2)} จากเพดาน ฿${dailyCapThb} (${pct}%)`)]);
       }
       case 'create': {
+        if (notActive(cmd.channel)) return reply(replyToken, [text(notActive(cmd.channel))]);
         if (!(await store.channelExists(cmd.channel))) return reply(replyToken, [text(`ไม่พบช่อง "${cmd.channel}"`)]);
         const jobId = await store.createJob({
           channelId: cmd.channel, grade: cmd.grade, topic: cmd.topic,
@@ -367,6 +370,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
       }
       case 'produce':
       case 'custom': {
+        if (notActive(cmd.channel)) return reply(replyToken, [text(notActive(cmd.channel))]);
         if (!gateway || !push) return reply(replyToken, [text('ระบบสร้างงานยังไม่ได้ตั้งค่า')]);
         if (!(await store.channelExists(cmd.channel))) return reply(replyToken, [text(`ไม่พบช่อง "${cmd.channel}"`)]);
         if (cmd.prompts && splitScenes(cmd.script, cmd.prompts.length, { enforce: false }).length !== cmd.prompts.length) {
@@ -427,6 +431,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
       }
       case 'ideas':
       case 'ideasnew': {
+        if (notActive(cmd.channel)) return reply(replyToken, [text(notActive(cmd.channel))]);
         if (!(await store.channelExists(cmd.channel))) return reply(replyToken, [text(`ไม่พบช่อง "${cmd.channel}"`)]);
         if (cmd.cmd === 'ideasnew') {
           if (!research) return reply(replyToken, [text('ระบบหาไอเดียยังไม่ได้ตั้งค่า')]);

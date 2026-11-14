@@ -16,7 +16,7 @@ export async function buildDigest({ store, dailyCapThb }) {
   return lines.join('\n');
 }
 
-export function startScheduler({ store, push, owners, dailyCapThb, digestHour = Number(process.env.DIGEST_HOUR ?? 20), researchAt = process.env.RESEARCH_TIME ?? '07:30', research, warnRatio = 0.8, tickMs = 60_000, now = () => new Date() }) {
+export function startScheduler({ store, push, owners, dailyCapThb, digestHour = Number(process.env.DIGEST_HOUR ?? 20), researchAt = process.env.RESEARCH_TIME ?? '07:30', research, channels = null, warnRatio = 0.8, tickMs = 60_000, now = () => new Date() }) {   // channels: null = every channel, or a list to research
   // Marks live in the database (audit_log), so a redeploy or restart never repeats a message already sent today.
   const once = async (kind, date, fn) => {
     const key = `${kind}:${date}`;
@@ -35,7 +35,7 @@ export function startScheduler({ store, push, owners, dailyCapThb, digestHour = 
       }
       if (research && (hour > rh || (hour === rh && minute >= rm))) await once('research', date, async () => {
         const done = [], failed = [];
-        for (const ch of await store.listChannels()) {
+        for (const ch of (await store.listChannels()).filter((c) => !channels || channels.includes(c))) {
           try { const r = await research(ch, date); (r.ok ? done : failed).push(r.ok ? (r.replay ? `${ch} (มีแล้ว)` : `${ch} ${r.count}`) : `${ch}: ${r.reason}`); }
           catch (e) { failed.push(`${ch}: ${e?.message ?? e}`); }
         }

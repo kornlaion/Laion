@@ -100,9 +100,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
   const baseUrl = process.env.PUBLIC_BASE_URL ?? (domain ? `https://${domain}` : '');
   if (!baseUrl) console.error('PUBLIC_BASE_URL / RAILWAY_PUBLIC_DOMAIN not set: image replies will fail');
-  const handlers = createHandlers({ store, reply: createLineReply(), push: createLinePush(), gateway, images, storage, baseUrl, contactSheet, planProvider, experts, owners: [...allow], content: createLineContent(), research: (channelId) => researchChannel({ store, gateway, channelId, date: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(new Date()), force: true }) });
+  // Phase 1: only KORN AVA (love) is produced and researched. ACTIVE_CHANNELS=love,energy-ai opens more; ACTIVE_CHANNELS=* opens all.
+  const activeList = (process.env.ACTIVE_CHANNELS ?? 'love').split(',').map((x) => x.trim()).filter(Boolean);
+  const activeChannels = activeList.includes('*') ? null : new Set(activeList);
+  const handlers = createHandlers({ store, activeChannels, reply: createLineReply(), push: createLinePush(), gateway, images, storage, baseUrl, contactSheet, planProvider, experts, owners: [...allow], content: createLineContent(), research: (channelId) => researchChannel({ store, gateway, channelId, date: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(new Date()), force: true }) });
   const { startScheduler } = await import('../ops/digest.mjs');
-  startScheduler({ store, push: createLinePush(), owners: [...allow], dailyCapThb: Number(process.env.DAILY_CAP_THB ?? 1000),
+  startScheduler({ store, channels: activeChannels ? [...activeChannels] : null, push: createLinePush(), owners: [...allow], dailyCapThb: Number(process.env.DAILY_CAP_THB ?? 1000),
     research: (channelId, date) => researchChannel({ store, gateway, channelId, date }) });
   const port = Number(process.env.PORT ?? 8787);
   makeServer({ secret, allow, handlers, images, assets, experts }).listen(port, () => console.log(`listening on ${port}`));
