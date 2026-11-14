@@ -69,3 +69,26 @@ test('5-second rule: long scripts get more scenes, every scene fits, words uncha
   assert.equal(flat(kept.join('')), flat(story));
   assert.ok(sceneCount(100) >= 3 && sceneCount(5000) <= 20);
 });
+
+test('real ffmpeg: music video = song excerpt + one picture per scene + lyrics, length equals the excerpt', { skip: !hasFfmpeg }, async () => {
+  const { renderMusic, planMusicTimeline } = await import('../render/music.mjs');
+  const tmp = fs.mkdtempSync('/tmp/mt-');
+  const jpgs = ['0x884422', '0x224488', '0x228844'].map((c, i) => {
+    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', `color=c=${c}:s=1024x1536:d=1`, '-frames:v', '1', `${tmp}/i${i}.jpg`]);
+    return fs.readFileSync(`${tmp}/i${i}.jpg`);
+  });
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=330:duration=30', '-c:a', 'libmp3lame', `${tmp}/song.mp3`]);
+  const bounds = [0, 4, 8.5, 12];
+  const tl = planMusicTimeline(bounds);
+  assert.equal(tl.T, 12);
+  assert.ok(Math.abs(tl.L.reduce((a, b) => a + b, 0) - (12 + 0.8 * 2)) < 1e-6);        // overlaps add the fade twice
+  const { video, seconds } = await renderMusic({ song: fs.readFileSync(`${tmp}/song.mp3`), start: 5, bounds, scenes: jpgs.map((image) => ({ image })),
+    lines: [{ text: 'ฉันจะรอเธออยู่ที่ตรงนี้', start: 0.5, end: 3.5 }, { text: 'ความฝันจะพาเรามาพบกันใหม่', start: 4.2, end: 8 }, { text: 'ฉันยังจะรักเธอ', start: 8.6, end: 11 }] });
+  fs.writeFileSync(`${tmp}/out.mp4`, video);
+  const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', `${tmp}/out.mp4`]).toString());
+  const v = probe.streams.find((s) => s.codec_type === 'video'), a = probe.streams.find((s) => s.codec_type === 'audio');
+  assert.deepEqual([v.width, v.height, v.codec_name, a.codec_name], [720, 1280, 'h264', 'aac']);
+  assert.ok(Math.abs(Number(probe.format.duration) - 12) < 0.25, probe.format.duration);
+  assert.equal(seconds, 12);
+  console.log('MUSIC_OUT', `${tmp}/out.mp4`);
+});

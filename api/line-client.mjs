@@ -32,12 +32,12 @@ export function createLinePush({ token = process.env.LINE_CHANNEL_ACCESS_TOKEN, 
 
 /** Downloads the bytes of an image/video/audio message the user sent to the bot (LINE keeps them only for a limited time). */
 export function createLineContent({ token = process.env.LINE_CHANNEL_ACCESS_TOKEN, fetchImpl = fetch, maxBytes = 60 * 1024 * 1024 } = {}) {
-  return async function content(messageId) {
+  return async function content(messageId, opts = {}) {
     if (!token) throw new Error('LINE_CHANNEL_ACCESS_TOKEN missing');
     const res = await fetchImpl(`https://api-data.line.me/v2/bot/message/${encodeURIComponent(messageId)}/content`, { headers: { authorization: `Bearer ${token}` } });
     if (!res.ok) throw new Error(`line_content_${res.status}`);
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > maxBytes) throw new Error('clip_too_large');
+    if (buf.length > (opts.maxBytes ?? maxBytes)) throw new Error('clip_too_large');
     return buf;
   };
 }

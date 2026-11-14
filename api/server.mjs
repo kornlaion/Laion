@@ -54,6 +54,8 @@ export function makeServer({ secret, allow, handlers, images, assets, experts = 
           else console.log('ignored: text is not a known command');
         } else if (ev.type === 'message' && ev.message?.type === 'video' && handlers.media) {
           await handlers.media(userId, ev.message, ev.replyToken);
+        } else if (ev.type === 'message' && (ev.message?.type === 'audio' || ev.message?.type === 'file') && handlers.song) {
+          await handlers.song(userId, ev.message, ev.replyToken);
         } else if (ev.type === 'postback') {
           const pb = parsePostback(ev.postback?.data);
           const ip = pb ? null : parseIdeaPostback(ev.postback?.data);
@@ -81,6 +83,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const { createScriptAdapter } = await import('../providers/anthropic-script.mjs');
   const { createResearchAdapter } = await import('../providers/openai-research.mjs');
   const { researchChannel } = await import('../ops/research.mjs');
+  const { createTranscribeAdapter } = await import('../providers/openai-transcribe.mjs');
   const secret = process.env.LINE_CHANNEL_SECRET ?? '';
   const allow = new Set((process.env.LINE_ALLOWED_USER_IDS ?? '').split(',').filter(Boolean));
   if (!secret || allow.size === 0) { console.error('Set LINE_CHANNEL_SECRET and LINE_ALLOWED_USER_IDS'); process.exit(1); }
@@ -90,7 +93,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const storage = r2Configured() ? createR2() : null;
   console.log(storage ? 'storage: R2' : 'storage: memory only (set R2_* variables)');
   const assets = storage ? async (id) => { const a = await store.getAsset(id); return a ? storage.get(a.r2Key) : null; } : null;
-  const gateway = createGateway({ store, adapters: { openai: createOpenAIImageAdapter(), elevenlabs: createElevenLabsAdapter(), render: createRenderAdapter({ storage }), anthropic: createScriptAdapter(), 'openai-text': createScriptAdapter({ vendor: 'openai' }), 'openai-research': createResearchAdapter() } });
+  const gateway = createGateway({ store, adapters: { openai: createOpenAIImageAdapter(), elevenlabs: createElevenLabsAdapter(), render: createRenderAdapter({ storage }), anthropic: createScriptAdapter(), 'openai-text': createScriptAdapter({ vendor: 'openai' }), 'openai-research': createResearchAdapter(), 'openai-transcribe': createTranscribeAdapter({ storage }) } });
   const experts = new Set((process.env.EXPERT_LINE_USER_IDS ?? '').split(',').map((x) => x.trim()).filter(Boolean));
   const planProvider = process.env.PLAN_PROVIDER === 'anthropic' ? 'anthropic' : 'openai-text';   // default: OpenAI writes the plan
   console.log(`planner: ${planProvider}`);

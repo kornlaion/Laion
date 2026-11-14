@@ -16,6 +16,14 @@ export const CHANNEL_GUIDE = {
 // Shared look so every scene feels like one film. Appended to every scene prompt in code.
 export const STYLE_ZEN = 'Japanese zen minimalism, serene and elegant, soft diffused natural light, muted warm earth tones with a touch of sage green, generous negative space, shallow depth of field, fine film grain, vertical 2:3 composition with the subject in the upper two thirds and a calm quiet area in the lower third, no text, no letters, no logos, no watermark, no people facing the camera';
 
+// Per-channel picture style. 'love' is a PLACEHOLDER until the owner's earlier KORN AVA clips are analysed; other channels fall back to STYLE_ZEN.
+export const STYLE_BY_CHANNEL = {
+  love: 'cinematic romantic mood, warm dusk and night light, soft bokeh, gentle film grain, dreamy and tender, vertical 2:3 composition with the subject in the upper two thirds and a calm darker area in the lower third for lyrics, no text, no letters, no logos, no watermark, no faces looking at the camera',
+};
+
+const SYSTEM_MUSIC_VISUAL = `You are the art director of a music-led vertical video for an original Thai love song. You receive numbered scenes; each has the sung lyrics for that moment (a scene marked "(instrumental)" has no lyrics). For each scene write ONE image prompt in English: a concrete, beautiful still that carries the feeling of those lyrics (night sky and stars, city lights, rain on glass, hands, silhouettes from behind, flowers, a quiet room, letters, moonlight on water...). Keep one consistent visual language across all scenes and let the story progress from scene to scene. Never show readable text, real people's faces or brands. Do not describe the overall style (it is added automatically), only the subject and setting.
+Reply with ONLY a JSON object (no markdown) with exactly one key: "image_prompts": an array with exactly one English prompt per scene, in order.`;
+
 function writeSystem(modeKey) {
   const m = MODES[modeKey] ?? MODES[DEFAULT_MODE];
   const L = lengthFor(MODES[modeKey] ? modeKey : DEFAULT_MODE);
@@ -115,13 +123,21 @@ export function createScriptAdapter({
   return {
     unit: 'call',
     model: () => model,
-    units: (p) => (p.task === 'caption' ? 1 : p.script ? 1 : 2),
+    units: (p) => (p.task === 'caption' || p.task === 'music' ? 1 : p.script ? 1 : 2),
     async call(p) {
       if (p.task === 'caption') {
         const c = await ask(SYSTEM_CAPTION, `Channel: ${p.channel}\nStyle: ${CHANNEL_GUIDE[p.channel] ?? 'Friendly and clear.'}\nTitle: ${p.title}\nVoice-over (Thai):\n${p.script}`, 1200);
         return { captions: parseCaptions(c.text), externalId: c.id };
       }
       const guide = `Channel: ${p.channel}\nStyle: ${CHANNEL_GUIDE[p.channel] ?? 'Friendly and clear.'}\nGrade: ${p.grade}`;
+      if (p.task === 'music') {
+        const texts = (p.scenes ?? []).map((t) => String(t ?? '').trim());
+        if (texts.length < 2 || texts.length > 24) throw new Error('music_scene_count');
+        const v = await ask(SYSTEM_MUSIC_VISUAL, `${guide}\nSong (Thai title): ${p.title}\nNumber of scenes: ${texts.length}\n\n${texts.map((t, i) => `Scene ${i + 1}${t ? '' : ' (instrumental)'}:\n${t}`).join('\n\n')}`);
+        const vis = parseVisual(JSON.stringify({ image_prompts: JSON.parse(v.text.slice(v.text.indexOf('{'), v.text.lastIndexOf('}') + 1)).image_prompts }), texts.length);
+        const style = STYLE_BY_CHANNEL[p.channel] ?? STYLE_ZEN;
+        return { plan: { title: p.title, style, scenes: texts.map((text, i) => ({ text: text || '♪', visual: vis.prompts[i], image_prompt: `${vis.prompts[i]}. ${style}` })) }, externalId: v.id };
+      }
       let title = p.topic, script = p.script, voice;
       let lastId = null;
       if (!script) {

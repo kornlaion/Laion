@@ -65,26 +65,12 @@ export function zenAss({ scenes, audioSecs, A, title, W, H, subFont = 'Pridi Lig
 const panY = (i, H, L) => (i % 2 === 0 ? `(ih-${H})*t/${L.toFixed(3)}` : `(ih-${H})*(1-t/${L.toFixed(3)})`);
 
 /**
- * scenes: [{ image: Buffer, audio: Buffer, text: string, clip?: Buffer, align?: {characters, starts, ends} }]  ->  { video: Buffer, seconds }
- * A scene with `clip` (e.g. a Veo video the owner made) uses the clip instead of the pan-and-zoom still; a clip shorter than the scene holds its last frame.
- * Size and threads are limited on purpose (see render.mjs): RENDER_WIDTH (default 720; 1080 when the plan has the memory).
+ * Shared by the voice-over video and the music video: builds the picture track from short pieces (never N parallel inputs).
+ * Needs i<k>.jpg in dir for every scene; scene lengths L[i] include the FADE overlap (scene i+1 starts L[i]-FADE after scene i).
+ * Returns the path of the joined silent video.
  */
-export function renderZen({
-  scenes, title, width = Number(process.env.RENDER_WIDTH ?? 720), threads = Number(process.env.RENDER_THREADS ?? 1),
-  subFont = process.env.SUB_FONT ?? 'Pridi Light', titleFont = process.env.TITLE_FONT ?? 'Pridi',
-}) {
-  return serial(async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'zen-'));
-    try {
-      const W = Math.round(width / 2) * 2, H = Math.round((W * 16) / 9 / 2) * 2, SH = Math.round((H * 1.2) / 2) * 2;
-      const n = scenes.length;
-      const audioSecs = [];
-      for (let i = 0; i < n; i++) {
-        await fs.writeFile(path.join(dir, `i${i}.jpg`), scenes[i].image);
-        await fs.writeFile(path.join(dir, `a${i}.mp3`), scenes[i].audio);
-        audioSecs.push(await audioSeconds(path.join(dir, `a${i}.mp3`)));
-      }
-      const { S, A, L, T } = planTimeline(audioSecs);
+export async function stitchScenes(dir, { scenes, L, W, H, SH, threads = 1 }) {
+  const n = scenes.length;
       // Scenes with a clip: normalise it once to the scene length (+0.6 s margin for the cross-fade), silent, same size/fps/colour as the stills.
       const hasClip = scenes.map((sc) => Boolean(sc.clip));
       for (let i = 0; i < n; i++) {
@@ -133,6 +119,32 @@ export function renderZen({
       await fs.writeFile(list, pieces.map((f) => `file '${f}'`).join('\n'));
       const joined = path.join(dir, 'joined.mp4');
       await run('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', joined]);
+      return joined;
+
+}
+
+/**
+ * scenes: [{ image: Buffer, audio: Buffer, text: string, clip?: Buffer, align?: {characters, starts, ends} }]  ->  { video: Buffer, seconds }
+ * A scene with `clip` (e.g. a Veo video the owner made) uses the clip instead of the pan-and-zoom still; a clip shorter than the scene holds its last frame.
+ * Size and threads are limited on purpose (see render.mjs): RENDER_WIDTH (default 720; 1080 when the plan has the memory).
+ */
+export function renderZen({
+  scenes, title, width = Number(process.env.RENDER_WIDTH ?? 720), threads = Number(process.env.RENDER_THREADS ?? 1),
+  subFont = process.env.SUB_FONT ?? 'Pridi Light', titleFont = process.env.TITLE_FONT ?? 'Pridi',
+}) {
+  return serial(async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'zen-'));
+    try {
+      const W = Math.round(width / 2) * 2, H = Math.round((W * 16) / 9 / 2) * 2, SH = Math.round((H * 1.2) / 2) * 2;
+      const n = scenes.length;
+      const audioSecs = [];
+      for (let i = 0; i < n; i++) {
+        await fs.writeFile(path.join(dir, `i${i}.jpg`), scenes[i].image);
+        await fs.writeFile(path.join(dir, `a${i}.mp3`), scenes[i].audio);
+        audioSecs.push(await audioSeconds(path.join(dir, `a${i}.mp3`)));
+      }
+      const { S, A, L, T } = planTimeline(audioSecs);
+      const joined = await stitchScenes(dir, { scenes, L, W, H, SH, threads });
 
       // 2) subtitles + title burned in, one pass over the joined video; voice takes placed on the timeline
       const ass = path.join(dir, 'sub.ass');

@@ -7,6 +7,7 @@ export const WARN_RATIO = 0.8;
 // Which gates must be approved before each action.
 const REQUIRED_GATES = {
   caption: ['A', 'B', 'D'],   // publish pack (captions/hashtags), only after the final video is approved
+  align: [],           // timing the owner's own lyrics against the singing (cheap, before Gate A)
   research: [],        // daily topic research, billed to a per-channel system job
   script: [],          // a cheap draft shown to the owner BEFORE Gate A, so Gate A approves a real plan
   image: ['A'],
@@ -15,7 +16,7 @@ const REQUIRED_GATES = {
   render: ['A', 'B'],
   publish: ['A', 'B', 'D'],
 };
-const PAID_ACTIONS = new Set(['research', 'caption', 'script', 'image', 'voice', 'video', 'render']);
+const PAID_ACTIONS = new Set(['research', 'align', 'caption', 'script', 'image', 'voice', 'video', 'render']);
 
 /**
  * @param {object} p
@@ -40,7 +41,7 @@ export function decide({ req, job, spentJobThb, spentTodayThb, dailyCapThb, kill
 
   const gates = REQUIRED_GATES[req.action];
   if (!gates) return deny('unknown_action');
-  const need = job.requiresExpert && !['image', 'script', 'research'].includes(req.action) ? [...gates, 'C'] : gates;
+  const need = job.requiresExpert && !['image', 'script', 'research', 'align'].includes(req.action) ? [...gates, 'C'] : gates;
   const missing = need.filter((g) => !approvedGates.includes(g));
   if (missing.length) return deny(`gate_missing_${missing.join('')}`);
 

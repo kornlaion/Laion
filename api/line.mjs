@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { modeByName } from '../render/formats.mjs';
+import { parseClock } from '../ops/lyrics.mjs';
 
 /** LINE signs the RAW body (HMAC-SHA256, base64) in x-line-signature. Never parse before verifying. */
 export function verifySignature(rawBody, signatureHeader, channelSecret) {
@@ -30,12 +31,19 @@ export function parseCommand(text) {
     raw = raw.slice(0, at).trim();
     if (prompts.length < 2 || prompts.length > 6 || prompts.some((x) => x.length > 1500)) return null;
   }
+  const lyr = raw.match(/^เนื้อเพลง ([^\n]{1,60})\r?\n([\s\S]{20,8000})$/);
+  if (lyr) return { cmd: 'lyrics', name: lyr[1].trim(), text: lyr[2].trim() };
   const vm = raw.match(/\r?\n[ \t]*เสียง(ชาย|หญิง)[ \t]*$/);
   if (vm) { voice = vm[1] === 'ชาย' ? 'male' : 'female'; raw = raw.slice(0, vm.index).trim(); }
   const custom = raw.match(/^เขียนเอง (\S+) (G[0-4])[ \t]+([^\n]{2,100})\r?\n([\s\S]{20,1200})$/);
   if (custom) return { cmd: 'custom', channel: custom[1], grade: custom[2], topic: custom[3].trim(), script: custom[4].trim(), ...(prompts ? { prompts } : {}), ...(voice ? { voice } : {}) };
   const t = String(text ?? '').trim().replace(/\s+/g, ' ');
   if (t === 'สถานะ') return { cmd: 'status' };
+  if (t === 'เพลงทั้งหมด') return { cmd: 'songs' };
+  let sm = t.match(/^ผลิตเพลง (.{1,60}?) (\d{1,2}:\d{2}(?:\.\d+)?|\d{1,3})-(\d{1,2}:\d{2}(?:\.\d+)?|\d{1,3})(?: (G[01]))?$/);
+  if (sm) { const from = parseClock(sm[2]), to = parseClock(sm[3]); return from !== null && to !== null && to > from ? { cmd: 'musicproduce', name: sm[1].trim(), from, to, grade: sm[4] ?? 'G1' } : null; }
+  sm = t.match(/^เพลง (.{1,60})$/);
+  if (sm) return { cmd: 'songname', name: sm[1].trim() };
   if (t === 'งบ') return { cmd: 'budget' };
   if (t === 'งาน') return { cmd: 'jobs' };
   if (t === 'ไอดี') return { cmd: 'whoami' };

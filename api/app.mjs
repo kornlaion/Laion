@@ -3,6 +3,7 @@ import { GRADE_CAP_THB } from '../gateway/policy.mjs';
 import { STYLE_ZEN } from '../providers/anthropic-script.mjs';
 import { splitScenes, sceneSeconds, MAX_SCENE_CHARS } from '../render/scenes.mjs';
 import { MODES, DEFAULT_MODE, estimateSeconds } from '../render/formats.mjs';
+import { createMusicFlow } from './music-flow.mjs';
 
 // Lane D channels (health / wellbeing) need expert Gate C before video, voice and publish.
 const EXPERT_CHANNELS = new Set(['mindbody', 'healthtech']);
@@ -180,6 +181,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     return m;
   }
   const hash = (x) => crypto.createHash('sha1').update(x).digest('hex').slice(0, 10);
+  const music = createMusicFlow({ store, reply, push, gateway, storage, baseUrl, content, planProvider, owners, reasonText, approvalCard, capThb: GRADE_CAP_THB, bySceneIndex, hash });
 
   async function doSceneImage(job, i, prompt, quality, key) {
     const out = await gateway.run({ jobId: job.id, action: 'image', provider: 'openai', params: { prompt, quality }, idempotencyKey: key, actor: 'worker' });
@@ -234,6 +236,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
   }
 
   async function doSceneVideo(userId, job) {
+    if (job.plan.music) return music.video(userId, job);   // music-led clip: the owner's song is the soundtrack, no voice-over
     const scenes = job.plan.scenes;
     const imgs = await bySceneIndex(job.id, 'image');
     if (scenes.some((_, i) => !imgs.has(i))) return push(userId, [text('ยังมีซีนที่ไม่มีภาพ พิมพ์ ซีน <เลข> เพื่อสร้างก่อน')]);
@@ -302,7 +305,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     if (!job?.plan?.scenes) return reply(replyToken, [text(NO_JOB)]);
     const i = cmd.n - 1;
     if (i < 0 || i >= job.plan.scenes.length) return reply(replyToken, [text(`งานนี้มี ${job.plan.scenes.length} ซีน (พิมพ์ ซีน 1 ถึง ${job.plan.scenes.length})`)]);
-    if (cmd.prompt) job.plan.overrides = { ...(job.plan.overrides ?? {}), [i]: job.plan.custom ? cmd.prompt : `${cmd.prompt}. ${STYLE_ZEN}` };
+    if (cmd.prompt) job.plan.overrides = { ...(job.plan.overrides ?? {}), [i]: job.plan.custom ? cmd.prompt : `${cmd.prompt}. ${job.plan.style ?? STYLE_ZEN}` };
     if (cmd.prompt) await store.setPlan(job.id, job.plan);
     await reply(replyToken, [text(`กำลังสร้างซีน ${cmd.n} ใหม่ รอสักครู่`)]);
     return doScenes(userId, job, [i], { force: true, keyBase: `regen:${replyToken}` });
@@ -403,6 +406,10 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
           approvalCard(jobId, 'A', `Gate A แผนงาน\n${cmd.channel} ${cmd.grade}\n${plan.title}\nอนุมัติแล้วระบบสร้างภาพต่อทันที`),
         ]);
       }
+      case 'songname': return music.songName(userId, cmd, replyToken);
+      case 'lyrics': return music.lyrics(userId, cmd, replyToken);
+      case 'songs': return music.list(replyToken);
+      case 'musicproduce': return music.produce(userId, cmd, replyToken);
       case 'clip': {
         if (!storage || !content) return reply(replyToken, [text('การรับคลิปต้องตั้งค่า R2 และ LINE ก่อน')]);
         const job = await latestA();
@@ -581,5 +588,5 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
   /** Anyone may ask for their own LINE user ID (needed to register an expert). It grants nothing by itself. */
   const whoami = (userId, replyToken) => reply(replyToken, [text(`LINE user ID ของคุณ:\n${userId}\n(ส่งให้เจ้าของระบบเพื่อลงทะเบียน)`)]);
 
-  return { command, postback, whoami, media, idea };
+  return { command, postback, whoami, media, idea, song: music.upload };
 }
