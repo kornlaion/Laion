@@ -3,6 +3,10 @@ import { modeByName } from '../render/formats.mjs';
 import { parseClock } from '../ops/lyrics.mjs';
 
 /** LINE signs the RAW body (HMAC-SHA256, base64) in x-line-signature. Never parse before verifying. */
+// Short names the owner can type for a channel.
+const CHANNEL_ALIAS = { korn: 'love', kornava: 'love', 'korn-ava': 'love', ava: 'love', beyond: 'energy-ai', ever: 'healthtech', universe: 'pet', melody: 'mindbody' };
+const ch = (x) => CHANNEL_ALIAS[String(x).toLowerCase()] ?? x;
+
 export function verifySignature(rawBody, signatureHeader, channelSecret) {
   if (!signatureHeader || !channelSecret) return false;
   const expected = crypto.createHmac('sha256', channelSecret).update(rawBody).digest();
@@ -36,7 +40,7 @@ export function parseCommand(text) {
   const vm = raw.match(/\r?\n[ \t]*เสียง(ชาย|หญิง)[ \t]*$/);
   if (vm) { voice = vm[1] === 'ชาย' ? 'male' : 'female'; raw = raw.slice(0, vm.index).trim(); }
   const custom = raw.match(/^เขียนเอง (\S+) (G[0-4])[ \t]+([^\n]{2,100})\r?\n([\s\S]{20,1200})$/);
-  if (custom) return { cmd: 'custom', channel: custom[1], grade: custom[2], topic: custom[3].trim(), script: custom[4].trim(), ...(prompts ? { prompts } : {}), ...(voice ? { voice } : {}) };
+  if (custom) return { cmd: 'custom', channel: ch(custom[1]), grade: custom[2], topic: custom[3].trim(), script: custom[4].trim(), ...(prompts ? { prompts } : {}), ...(voice ? { voice } : {}) };
   const t = String(text ?? '').trim().replace(/\s+/g, ' ');
   if (t === 'สถานะ') return { cmd: 'status' };
   if (t === 'เพลงทั้งหมด') return { cmd: 'songs' };
@@ -49,7 +53,7 @@ export function parseCommand(text) {
   if (t === 'ไอดี') return { cmd: 'whoami' };
   if (t === 'ส่งวิดีโอ') return { cmd: 'sendvideo' };
   let m = t.match(/^สร้าง (\S+) (G[0-4]) (.+)$/);
-  if (m) return { cmd: 'create', channel: m[1], grade: m[2], topic: m[3] };
+  if (m) return { cmd: 'create', channel: ch(m[1]), grade: m[2], topic: m[3] };
   m = t.match(/^ภาพ (?:(low|medium|high) )?(.{3,800})$/);
   if (m) return { cmd: 'image', quality: m[1] ?? 'low', prompt: m[2] };
   m = t.match(/^เสียง (?:(ชาย|หญิง) )?(.{2,400})$/);
@@ -65,7 +69,7 @@ export function parseCommand(text) {
       topic = topic.slice(0, i).trim();
       if (!mode || topic.length < 2) return null;
     }
-    return { cmd: 'produce', channel: m[1], grade: m[2], topic, ...(mode ? { mode } : {}) };
+    return { cmd: 'produce', channel: ch(m[1]), grade: m[2], topic, ...(mode ? { mode } : {}) };
   }
   m = t.match(/^ซีน (\d{1,2})(?: (.{3,600}))?$/);
   if (m) return { cmd: 'scene', n: Number(m[1]), prompt: m[2] };
@@ -82,9 +86,9 @@ export function parseCommand(text) {
   m = t.match(/^เริ่ม (\S+)$/);
   if (m) return { cmd: 'resume', target: m[1] };
   m = t.match(/^ไอเดีย (\S+)$/);
-  if (m) return { cmd: 'ideas', channel: m[1] };
+  if (m) return { cmd: 'ideas', channel: ch(m[1]) };
   m = t.match(/^ไอเดียใหม่ (\S+)$/);
-  if (m) return { cmd: 'ideasnew', channel: m[1] };
+  if (m) return { cmd: 'ideasnew', channel: ch(m[1]) };
   m = t.match(/^วิจัย (https?:\/\/\S+)$/);
   if (m) return { cmd: 'research', url: m[1] };
   return null;

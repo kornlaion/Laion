@@ -37,3 +37,10 @@ test('postback format', () => {
   assert.deepEqual(parsePostback(`gate:${id}:B:approve:abcd1234`), { jobId: id, gate: 'B', decision: 'approve', nonce: 'abcd1234' });
   assert.equal(parsePostback('gate:bad:B:approve:abcd1234'), null);
 });
+
+test('short channel names: ไอเดีย korn means love', () => {
+  assert.deepEqual(parseCommand('ไอเดีย korn'), { cmd: 'ideas', channel: 'love' });
+  assert.deepEqual(parseCommand('ไอเดียใหม่ KORN'), { cmd: 'ideasnew', channel: 'love' });
+  assert.equal(parseCommand('ผลิต korn G1 หัวข้อ').channel, 'love');
+  assert.deepEqual(parseCommand('ไอเดีย love'), { cmd: 'ideas', channel: 'love' });
+});

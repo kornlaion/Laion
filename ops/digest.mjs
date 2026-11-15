@@ -39,7 +39,7 @@ export function startScheduler({ store, push, owners, dailyCapThb, digestHour = 
           try { const r = await research(ch, date); (r.ok ? done : failed).push(r.ok ? (r.replay ? `${ch} (มีแล้ว)` : `${ch} ${r.count}`) : `${ch}: ${r.reason}`); }
           catch (e) { failed.push(`${ch}: ${e?.message ?? e}`); }
         }
-        await send(['ไอเดียหัวข้อวันนี้พร้อมแล้ว', done.join(' · ') || '-', ...(failed.length ? ['ไม่สำเร็จ:', ...failed] : []), '', 'พิมพ์ ไอเดีย <ช่อง> เช่น ไอเดีย love เพื่อดูและเลือกผลิต'].join('\n'));
+        await send(['ไอเดียหัวข้อวันนี้พร้อมแล้ว', done.join(' · ') || '-', ...(failed.length ? ['ไม่สำเร็จ:', ...failed] : []), '', 'พิมพ์ ไอเดีย <ช่อง> เช่น ไอเดีย korn เพื่อดูและเลือกผลิต'].join('\n'));
       });
       if (hour >= digestHour) await once('digest', date, async () => send(await buildDigest({ store, dailyCapThb })));
     } catch (e) { console.error('scheduler_error', e?.message ?? e); }
