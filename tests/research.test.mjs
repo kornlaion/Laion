@@ -117,3 +117,21 @@ test('restart-safe: a second scheduler (after a redeploy) does not repeat the re
   await make().tick();                                                // "new process"
   assert.equal(sent.length, 2);
 });
+
+test('KORN AVA idea mix: tags in titles, the request asks for the mix, and the tag never leaks into the produced topic', async () => {
+  const tagged = IDEAS.map((x, i) => ({ ...x, tag: ['ความรัก', 'กำลังใจ', 'ข่าว', 'เพลง', 'วันสำคัญ'][i % 5] }));
+  const ideas = parseIdeas(JSON.stringify({ ideas: tagged }), URLS);
+  assert.equal(ideas[0].title, '[ความรัก] หัวข้อที่ 1');
+  assert.equal(ideas[2].title, '[ข่าว] หัวข้อที่ 3');
+  const seen = {};
+  const adapter = createResearchAdapter({ apiKey: 'k', fetchImpl: respFetch(seen) });
+  await adapter.call({ channel: 'love', date: '2026-11-15' });
+  assert.match(seen.body.input, /3 with tag "ความรัก"/);
+  assert.match(seen.body.input, /3 with tag "กำลังใจ"/);
+  assert.match(seen.body.input, /2 with tag "ข่าว"/);
+  assert.match(seen.body.input, /love, being understood/);
+  assert.match(seen.body.input, /encouragement, hope, compassion/);
+  const other = {};
+  await createResearchAdapter({ apiKey: 'k', fetchImpl: respFetch(other) }).call({ channel: 'pet', date: '2026-11-15' });
+  assert.doesNotMatch(other.body.input, /Mix for this channel/);
+});

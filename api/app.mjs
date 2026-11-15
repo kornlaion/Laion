@@ -567,7 +567,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
     if (x.status !== 'new') return reply(replyToken, [text(x.status === 'picked' ? 'เลือกไอเดียนี้ไปแล้ว' : 'ไอเดียนี้ถูกข้ามไปแล้ว')]);
     if (ip.action === 'skip') { await store.setIdeaStatus(x.id, 'skipped'); return reply(replyToken, [text('ข้ามแล้ว')]); }
     await store.setIdeaStatus(x.id, 'picked');
-    return command(userId, { cmd: 'produce', channel: x.channelId, grade: 'G1', topic: `${x.title} — ${x.hook}`.slice(0, 200) }, replyToken);
+    return command(userId, { cmd: 'produce', channel: x.channelId, grade: 'G1', topic: `${x.title.replace(/^\[[^\]]{1,12}\]\s*/, '')} — ${x.hook}`.slice(0, 200) }, replyToken);
   }
 
   /** A video message from the owner: attach it as the clip of the scene chosen with "คลิป <n>". */

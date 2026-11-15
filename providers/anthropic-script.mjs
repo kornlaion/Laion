@@ -6,7 +6,7 @@ import { sceneCount, splitScenes } from '../render/scenes.mjs';
 import { MODES, DEFAULT_MODE, lengthFor } from '../render/formats.mjs';
 
 export const CHANNEL_GUIDE = {
-  love: 'Channel KORN AVA (Love & Happiness). Music-led: write short, lyrical, heartfelt lines with room to breathe so music carries the mood. Warm, romantic, hopeful; small happy moments.',
+  love: 'Channel KORN AVA (Love & Happiness). Music-led: write short, lyrical, heartfelt lines with room to breathe so music carries the mood. Warm, romantic, hopeful; small happy moments. Themes: love, happiness, understanding, compassion, encouragement, hope.',
   mindbody: 'Channel Melody Svaha. Calm, gentle, grounding. General wellbeing habits only. NEVER give medical advice, diagnoses, treatments or health claims.',
   'energy-ai': 'Channel LAION BEYOND. Clear, curious, factual tone about EVs, energy and AI tools. Keep claims general; do not invent numbers, prices or specs.',
   healthtech: 'Channel LAION EVER. Plain-language explainers about health technology. NEVER give medical advice, diagnoses, treatment or efficacy claims; say it is general information.',
