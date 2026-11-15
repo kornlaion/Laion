@@ -151,3 +151,14 @@ test('scheduler: paused ideas (kill provider "ideas") sends no research; resumin
   assert.equal(sent.length, 1);
   s.stop();
 });
+
+test('scheduler: system kill switch also stops scheduled research (no failure spam, no cost)', async () => {
+  const { store, gateway } = world();
+  const sent = [];
+  await store.setKill('system', '*');
+  const s = startScheduler({ store, push: async (id, m) => sent.push(m[0].text), owners: ['U1'], dailyCapThb: 1000, now: () => new Date('2026-11-13T01:00:00Z'), tickMs: 3600_000,
+    research: (ch, date) => researchChannel({ store, gateway, channelId: ch, date }) });
+  await s.tick();
+  assert.equal(sent.length, 0);
+  s.stop();
+});
