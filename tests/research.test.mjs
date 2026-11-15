@@ -135,3 +135,19 @@ test('KORN AVA idea mix: tags in titles, the request asks for the mix, and the t
   await createResearchAdapter({ apiKey: 'k', fetchImpl: respFetch(other) }).call({ channel: 'pet', date: '2026-11-15' });
   assert.doesNotMatch(other.body.input, /Mix for this channel/);
 });
+
+test('scheduler: paused ideas (kill provider "ideas") sends no research; resuming researches the same day', async () => {
+  const { store, gateway } = world();
+  const sent = [];
+  await store.setKill('provider', 'ideas');
+  const t = new Date('2026-11-13T01:00:00Z');                        // 08:00 Bangkok
+  const s = startScheduler({ store, push: async (id, m) => sent.push(m[0].text), owners: ['U1'], dailyCapThb: 1000, now: () => t, tickMs: 3600_000,
+    research: (ch, date) => researchChannel({ store, gateway, channelId: ch, date }) });
+  await s.tick();
+  assert.equal(sent.length, 0);
+  assert.equal(store.state.ledger.length, 0);
+  await store.clearKill('provider', 'ideas');
+  await s.tick();
+  assert.equal(sent.length, 1);
+  s.stop();
+});

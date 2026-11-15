@@ -478,7 +478,7 @@ export function createHandlers({ store, reply, push, gateway, images, storage, b
         if (cmd.target === 'all') await store.setKill('system', '*');
         else if (await store.channelExists(cmd.target)) await store.setKill('channel', cmd.target);
         else await store.setKill('provider', cmd.target);
-        return reply(replyToken, [text(`พักแล้ว: ${cmd.target}`)]);
+        return reply(replyToken, [text(cmd.target === 'ideas' ? 'หยุดส่งไอเดียอัตโนมัติแล้ว (พิมพ์ เริ่ม ideas เพื่อกลับมา)' : `พักแล้ว: ${cmd.target}`)]);
       }
       case 'resume': {
         if (cmd.target === 'all') await store.clearKill('system', '*');

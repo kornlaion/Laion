@@ -33,7 +33,9 @@ export function startScheduler({ store, push, owners, dailyCapThb, digestHour = 
       if (spent >= dailyCapThb * warnRatio) {
         await once('budget-warn', date, () => send(`เตือนงบ: ใช้วันนี้ ฿${spent.toFixed(2)} ถึง ${Math.round((spent / dailyCapThb) * 100)}% ของเพดานรายวัน ฿${dailyCapThb}`));
       }
-      if (research && (hour > rh || (hour === rh && minute >= rm))) await once('research', date, async () => {
+      // หยุดส่งไอเดียชั่วคราว: พิมพ์ `พัก ideas` ใน LINE (หรือตั้ง IDEAS_PAUSED=1) / `เริ่ม ideas` เพื่อกลับมา — ไม่ markDone จึงค้นให้ทันทีเมื่อเริ่มใหม่
+      const ideasPaused = process.env.IDEAS_PAUSED === '1' || !!(await store.killed?.())?.providers?.includes('ideas');
+      if (research && !ideasPaused && (hour > rh || (hour === rh && minute >= rm))) await once('research', date, async () => {
         const done = [], failed = [];
         for (const ch of (await store.listChannels()).filter((c) => !channels || channels.includes(c))) {
           try { const r = await research(ch, date); (r.ok ? done : failed).push(r.ok ? (r.replay ? `${ch} (มีแล้ว)` : `${ch} ${r.count}`) : `${ch}: ${r.reason}`); }
